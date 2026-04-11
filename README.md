@@ -57,7 +57,7 @@ Result:
 <project>/
 ├── README.md
 ├── template/   # drop your .pptm/.pptx here
-├── cv-data/    # one YAML file per record (consultant, use case, etc.)
+├── data/    # one YAML file per record (consultant, use case, etc.)
 └── output/     # generated decks land here
 ```
 
@@ -121,7 +121,7 @@ placeholders:
 Create a directory with one YAML file per record. Filenames become the sort order:
 
 ```
-cv-data/
+data/
 ├── 01-jane-doe.yaml
 ├── 02-john-smith.yaml
 └── 03-alice-wong.yaml
@@ -153,7 +153,7 @@ The field names on the left must match the keys in your template config's `place
 ```
 recombinase generate \
   --config template-config.yaml \
-  --data-dir cv-data/ \
+  --data-dir data/ \
   --output output/deck.pptx
 ```
 
@@ -164,7 +164,7 @@ Produces a populated pptx with one slide per YAML file. If `clear_source_slide: 
 After the config exists:
 
 ```
-recombinase generate -c template-config.yaml -d cv-data/ -o out.pptx
+recombinase generate -c template-config.yaml -d data/ -o out.pptx
 ```
 
 ## Design notes
@@ -197,7 +197,7 @@ C:\Users\<you>\OneDrive - <Org>\Pack\       # work product (synced, backed up)
 ├── template\
 │   ├── CV_template.pptm                   # the canonical pptx
 │   └── template-config.yaml               # mapping shape names → data fields
-├── cv-data\                                # per-consultant YAML records
+├── data\                                # per-consultant YAML records
 │   ├── 01-jane-doe.yaml
 │   ├── 02-john-smith.yaml
 │   └── 03-alice-wong.yaml
@@ -211,7 +211,7 @@ The package itself is generic tooling and lives in your Python site-packages —
 cd "C:\Users\<you>\OneDrive - <Org>\Pack"
 recombinase inspect "template\CV_template.pptm"
 recombinase init "template\CV_template.pptm" -o "template\template-config.yaml"
-recombinase generate -c "template\template-config.yaml" -d "cv-data" -o "output\deck.pptx"
+recombinase generate -c "template\template-config.yaml" -d "data" -o "output\deck.pptx"
 ```
 
 ## Development

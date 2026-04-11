@@ -116,7 +116,7 @@ def test_cli_generate_zero_arg_inside_scaffolded_project(
 
     # Set up scaffolded layout manually (what `recombinase new` would create)
     (project / "template").mkdir()
-    (project / "cv-data").mkdir()
+    (project / "data").mkdir()
     (project / "output").mkdir()
     shutil.copy(simple_template, project / "template" / "t.pptx")
 
@@ -135,7 +135,7 @@ def test_cli_generate_zero_arg_inside_scaffolded_project(
     )
 
     # Write one record
-    (project / "cv-data" / "alpha.yaml").write_text(
+    (project / "data" / "alpha.yaml").write_text(
         yaml.safe_dump({"id": "alpha", "name": "Alpha Jones"}), encoding="utf-8"
     )
 
@@ -176,4 +176,4 @@ def test_cli_generate_zero_arg_errors_cleanly_when_no_data_dir(tmp_path: Path, m
     result = runner.invoke(app, ["generate"])
     assert result.exit_code == 1
     combined = result.output + (result.stderr if hasattr(result, "stderr") else "")
-    assert "No --data-dir" in combined or "cv-data" in combined
+    assert "No --data-dir" in combined or "data" in combined

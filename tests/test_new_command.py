@@ -19,7 +19,7 @@ def test_new_creates_layout(tmp_path: Path) -> None:
 
     assert project.exists()
     assert (project / "template").is_dir()
-    assert (project / "cv-data").is_dir()
+    assert (project / "data").is_dir()
     assert (project / "output").is_dir()
     assert (project / "README.md").is_file()
 
@@ -66,7 +66,7 @@ def test_new_readme_is_written(tmp_path: Path) -> None:
     content = readme.read_text(encoding="utf-8")
     assert "Recombinase project" in content
     assert "template/" in content
-    assert "cv-data/" in content
+    assert "data/" in content
     assert "output/" in content
 
 
@@ -110,5 +110,5 @@ def test_new_with_no_arg_uses_default(monkeypatch: pytest.MonkeyPatch, tmp_path:
     expected_project = fake_onedrive / "cv"
     assert expected_project.exists()
     assert (expected_project / "template").is_dir()
-    assert (expected_project / "cv-data").is_dir()
+    assert (expected_project / "data").is_dir()
     assert (expected_project / "output").is_dir()

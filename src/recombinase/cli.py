@@ -1,7 +1,7 @@
 """CLI entry point for recombinase, built on Typer for rich human UX.
 
 Subcommands:
-- new      : scaffold a project directory (template/, cv-data/, output/)
+- new      : scaffold a project directory (template/, data/, output/)
 - inspect  : print structural metadata of a pptx template
 - init     : write a scaffold config YAML from a template's shape names
 - generate : populate a template from YAML records and write to an output pptx
@@ -147,13 +147,13 @@ def cmd_new(
         help="Proceed even if the target directory already exists and is non-empty.",
     ),
 ) -> None:
-    """Scaffold a new project directory with template/, cv-data/, and output/ subfolders.
+    """Scaffold a new project directory with template/, data/, and output/ subfolders.
 
     Creates a conventional folder layout under the given path:
 
         <project-dir>/
           template/   — put your .pptx/.pptm template here
-          cv-data/    — put your per-record YAML files here
+          data/    — put your per-record YAML files here
           output/     — generated decks will land here
 
     Safe to run in OneDrive — it's a plain mkdir + README write, no sync surprises.
@@ -173,7 +173,7 @@ def cmd_new(
         )
         raise typer.Exit(code=1)
 
-    subfolders = ("template", "cv-data", "output")
+    subfolders = ("template", "data", "output")
     for sub in subfolders:
         (project_dir / sub).mkdir(parents=True, exist_ok=True)
 
@@ -184,15 +184,15 @@ def cmd_new(
             "This folder was scaffolded by `recombinase new`.\n\n"
             "## Layout\n\n"
             "- `template/` — place the source .pptx/.pptm template file here\n"
-            "- `cv-data/` — one YAML file per record (consultant, use case, etc.)\n"
+            "- `data/` — one YAML file per record (consultant, use case, etc.)\n"
             "- `output/` — generated decks land here\n\n"
             "## Typical workflow\n\n"
             "```\n"
             "recombinase inspect template/YOUR_TEMPLATE.pptm\n"
             "recombinase init template/YOUR_TEMPLATE.pptm -o template/config.yaml\n"
             "# edit template/config.yaml to map field names to shape names\n"
-            "# write one .yaml file per record in cv-data/\n"
-            "recombinase generate -c template/config.yaml -d cv-data/ "
+            "# write one .yaml file per record in data/\n"
+            "recombinase generate -c template/config.yaml -d data/ "
             "-o output/deck.pptx\n"
             "```\n",
             encoding="utf-8",
@@ -487,7 +487,7 @@ def cmd_generate(
         resolve_path=True,
         help=(
             "Directory containing per-record YAML files. Defaults to "
-            "`./cv-data` when run inside a scaffolded project."
+            "`./data` when run inside a scaffolded project."
         ),
     ),
     output: Path = typer.Option(
@@ -528,7 +528,7 @@ def cmd_generate(
     """Generate a populated pptx deck from a template + YAML data directory.
 
     With no arguments, resolves defaults against the `recombinase new`
-    scaffolded layout (./template/config.yaml, ./cv-data/, ./output/deck.pptx)
+    scaffolded layout (./template/config.yaml, ./data/, ./output/deck.pptx)
     so you can `cd` into the project and just run `recombinase generate`.
 
     Pass `--dry-run` to preview without writing.
@@ -552,10 +552,10 @@ def cmd_generate(
         config = candidate.resolve()
 
     if data_dir is None:
-        candidate = cwd / "cv-data"
+        candidate = cwd / "data"
         if not candidate.is_dir():
             typer.secho(
-                "No --data-dir specified and ./cv-data/ not found. "
+                "No --data-dir specified and ./data/ not found. "
                 "Create it or pass --data-dir explicitly.",
                 fg=typer.colors.RED,
                 err=True,

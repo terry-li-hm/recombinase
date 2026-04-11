@@ -5,6 +5,21 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.16] - 2026-04-12
+
+### Changed
+
+- **Data directory default renamed from `cv-data/` to `data/`.** Breaking
+  default, no backward-compat shim. The `cv-` prefix was redundant once
+  the parent pack directory (`cv/`, `pitch-deck/`, etc.) carried
+  the semantic, and `data/` generalises to non-CV packs cleanly. Same
+  logic as renaming the template filename to `./template.pptx`. Affects:
+  - `recombinase generate` default for `--data-dir`: `./cv-data` → `./data`
+  - `recombinase new` scaffold: creates `data/` subfolder instead of `cv-data/`
+  - Error messages and README updated to match
+- No new features; just the rename. Existing users on `cv-data/` must
+  either rename the folder or pass `--data-dir cv-data` explicitly.
+
 ## [0.1.15] - 2026-04-12
 
 ### Added
