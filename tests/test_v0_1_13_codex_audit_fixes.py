@@ -203,6 +203,55 @@ def test_combined_missing_column_and_short_record(tmp_path: Path) -> None:
     assert any("clearing 2 unused row" in w for w in warnings)
 
 
+def test_merged_cells_do_not_crash_clear(tmp_path: Path) -> None:
+    """Gemini finding (post-Codex fix): _clear_cell must skip spanned cells.
+
+    python-pptx raises on `cell.text_frame` for spanned (merged non-origin)
+    cells. The Codex audit fix added three unconditional _clear_cell loops —
+    any template with merged cells in the data region would crash with
+    ValueError before this guard.
+
+    Build a table where two adjacent cells in an excess-row region are merged,
+    then provide a short record. The clear-excess-rows path must succeed
+    without raising; only the merge origin's text needs to go to empty.
+    """
+    template = tmp_path / "merged.pptx"
+    _build_template_with_table(template, data_rows=3)
+
+    # Merge two cells in row 2 (an excess row we'll clear) BEFORE saving.
+    prs = Presentation(str(template))
+    shape = find_shape_by_name(prs.slides[0], "projects")
+    assert shape is not None
+    origin = shape.table.cell(2, 0)
+    other = shape.table.cell(2, 1)
+    origin.merge(other)
+    prs.save(str(template))
+
+    _, shape = _load_table_shape(template)
+    config = TableConfig(
+        shape="projects",
+        columns=["client", "role", "outcome"],
+        header_row=True,
+    )
+    # One record → rows 2 and 3 are excess → the merged cells get cleared
+    rows = [{"client": "Bank A", "role": "Lead", "outcome": "Delivered"}]
+
+    # Must NOT raise. Before the is_spanned guard, this raised ValueError
+    # on cell.text_frame access for the spanned non-origin cell.
+    warnings = populate_table(shape, config, rows)
+
+    table = shape.table
+    # Populated row is intact
+    assert table.cell(1, 0).text == "Bank A"
+    # Excess row 3 fully cleared (non-merged)
+    assert table.cell(3, 0).text == ""
+    assert table.cell(3, 1).text == ""
+    assert table.cell(3, 2).text == ""
+    # Merge origin in row 2 is cleared (spanned sibling skipped silently)
+    assert table.cell(2, 0).text == ""
+    assert any("clearing 2 unused row" in w for w in warnings)
+
+
 def test_fully_populated_still_works_no_extra_warnings(tmp_path: Path) -> None:
     """Regression: a fully populated table still succeeds with no warnings."""
     template = tmp_path / "t.pptx"

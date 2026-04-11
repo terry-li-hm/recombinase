@@ -404,7 +404,14 @@ def _clear_cell(cell: Any) -> None:
     python-pptx does not expose a cell.clear(); assigning an empty string to
     `cell.text_frame.text` collapses the cell to a single empty paragraph,
     which is the closest analogue and preserves column width / row height.
+
+    Spanned (merged non-origin) cells have no accessible text frame — python-
+    pptx raises on `.text_frame` for them. Skip silently: the merge origin's
+    text is cleared when that cell's own iteration visits it, so the visual
+    region still renders empty.
     """
+    if getattr(cell, "is_spanned", False):
+        return
     cell.text_frame.text = ""
 
 
