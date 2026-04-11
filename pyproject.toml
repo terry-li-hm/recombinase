@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "recombinase"
-version = "0.1.9"
+version = "0.1.10"
 description = "Template-guided document synthesis: extract structured content from source pptx files and recombine into a canonical template"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -82,6 +82,10 @@ ignore = [
 "src/recombinase/cli.py" = [
     "B008",    # Typer requires function calls in arg defaults
     "BLE001",  # last-resort CLI guard must catch broad Exception
+]
+"src/recombinase/generate.py" = [
+    "N806",    # camelCase locals that mirror OOXML element names (pPr, rPr, etc.)
+    "N803",    # camelCase parameters that mirror OOXML element names
 ]
 
 [tool.pytest.ini_options]

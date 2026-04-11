@@ -171,18 +171,77 @@ def set_shape_value(shape: Any, value: Any) -> None:
 def _write_paragraphs(text_frame: Any, items: list[str]) -> None:
     """Write a list of strings as paragraphs into a text frame, one per item.
 
-    Empty input clears the text frame. Non-empty input reuses the existing
-    single paragraph for the first item and appends new paragraphs for the
-    rest, so bullet formatting from the template is preserved.
+    Preserves paragraph-level formatting (bullet style, indent, alignment)
+    by capturing the first existing paragraph's `<a:pPr>` before clearing
+    the text frame, then re-injecting that pPr into every new paragraph.
+
+    Without this preservation step, `text_frame.clear()` wipes all pPr and
+    `add_paragraph()` produces bare paragraphs that lose the template's
+    bullet styling — so a 3-item list ends up with one bullet on the first
+    item and none on the rest. This is the v0.1.10 fix.
+
+    Empty input clears the text frame. Non-empty input keeps the first
+    existing paragraph's style profile for every output paragraph.
     """
+    from pptx.oxml.ns import qn
+
     if not items:
         text_frame.clear()
         return
+
+    # Capture the first existing paragraph's pPr + first run's rPr BEFORE
+    # clear() wipes them. These encode the template's bullet/indent/font style.
+    first_pPr_copy = None
+    first_rPr_copy = None
+    existing_paras = text_frame.paragraphs
+    if existing_paras:
+        first_p_xml = existing_paras[0]._p
+        first_pPr = first_p_xml.find(qn("a:pPr"))
+        if first_pPr is not None:
+            first_pPr_copy = deepcopy(first_pPr)
+        # Also capture the first run's rPr (font size, color, weight, etc.)
+        first_r = first_p_xml.find(qn("a:r"))
+        if first_r is not None:
+            first_rPr = first_r.find(qn("a:rPr"))
+            if first_rPr is not None:
+                first_rPr_copy = deepcopy(first_rPr)
+
     text_frame.clear()
+
     # After clear(), text_frame has exactly one empty paragraph to reuse.
-    text_frame.paragraphs[0].text = items[0]
+    first_p = text_frame.paragraphs[0]
+    first_p.text = items[0]
+    _apply_preserved_format(first_p, first_pPr_copy, first_rPr_copy)
+
     for item in items[1:]:
-        text_frame.add_paragraph().text = item
+        new_p = text_frame.add_paragraph()
+        new_p.text = item
+        _apply_preserved_format(new_p, first_pPr_copy, first_rPr_copy)
+
+
+def _apply_preserved_format(paragraph: Any, pPr_copy: Any, rPr_copy: Any) -> None:
+    """Inject a preserved pPr and the first run's rPr into a paragraph.
+
+    pPr is inserted at the start of the paragraph element (OOXML requires
+    pPr to precede text runs). rPr is injected at the start of the
+    paragraph's first run.
+    """
+    from pptx.oxml.ns import qn
+
+    if pPr_copy is not None:
+        # Remove any existing pPr (added by add_paragraph) then insert ours
+        existing_pPr = paragraph._p.find(qn("a:pPr"))
+        if existing_pPr is not None:
+            paragraph._p.remove(existing_pPr)
+        paragraph._p.insert(0, deepcopy(pPr_copy))
+
+    if rPr_copy is not None:
+        first_r = paragraph._p.find(qn("a:r"))
+        if first_r is not None:
+            existing_rPr = first_r.find(qn("a:rPr"))
+            if existing_rPr is not None:
+                first_r.remove(existing_rPr)
+            first_r.insert(0, deepcopy(rPr_copy))
 
 
 def remove_slide(presentation: Any, slide: Slide) -> None:

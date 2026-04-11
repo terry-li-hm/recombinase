@@ -5,6 +5,37 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-04-11
+
+### Fixed
+
+- **Bullet/paragraph formatting now preserved across list expansion.**
+  v0.1.9's `_write_paragraphs` called `text_frame.clear()` which wiped all
+  `<a:pPr>` elements, so only the first output paragraph inherited the
+  template's bullet styling (via master-level defaults). Items 2..N came
+  out as bare paragraphs — a 3-item background list rendered as one bullet
+  followed by two un-bulleted lines. v0.1.10 captures the first existing
+  paragraph's `<a:pPr>` AND the first run's `<a:rPr>` BEFORE clearing the
+  text frame, then re-injects both into every new paragraph via a new
+  `_apply_preserved_format` helper. Caught on the first real REDACTED template
+  run where `background`, `education`, `languages`, and `key_competencies`
+  all rendered with only one bullet each.
+
+### Added
+
+- 4 regression tests (`test_v0_1_10_bullet_preservation.py`) that verify
+  pPr and rPr preservation across list expansion, including a save/reopen
+  round-trip assertion. Tests build a synthetic template with an
+  injected `marL` pPr marker and `sz` rPr marker, then assert every output
+  paragraph carries the preserved attributes. 108 → 112 tests.
+
+### Deferred
+
+- Table cell population and picture placeholder insertion — now planned
+  for v0.1.11. The bullet bug was a higher-priority hot-fix because it
+  affected every bullet-list field in every CV output on v0.1.9, and the
+  table/picture features only affect two shapes on the REDACTED template.
+
 ## [0.1.9] - 2026-04-11
 
 ### Added
