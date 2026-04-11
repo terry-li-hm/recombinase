@@ -110,7 +110,7 @@ app = typer.Typer(
 def _version_callback(value: bool) -> None:
     if value:
         typer.echo(f"recombinase {__version__}")
-        raise typer.Exit()
+        raise typer.Exit
 
 
 @app.callback()

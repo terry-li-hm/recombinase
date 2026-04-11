@@ -58,26 +58,73 @@ line-length = 100
 
 [tool.ruff.lint]
 select = [
-    "E",    # pycodestyle errors
-    "W",    # pycodestyle warnings
-    "F",    # pyflakes
-    "I",    # isort
-    "B",    # flake8-bugbear
-    "C4",   # flake8-comprehensions
-    "UP",   # pyupgrade
-    "SIM",  # flake8-simplify
-    "RUF",  # ruff-specific
-    "N",    # pep8-naming
-    "PTH",  # use pathlib
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "SIM",    # flake8-simplify
+    "RUF",    # ruff-specific
+    "N",      # pep8-naming
+    "PTH",    # use pathlib
+    "ARG",    # flake8-unused-arguments
+    "RET",    # flake8-return
+    "ERA",    # eradicate commented-out code
+    "FBT",    # flake8-boolean-trap
+    "S",      # flake8-bandit (security)
+    "PIE",    # flake8-pie
+    "PT",     # flake8-pytest-style
+    "SLF",    # flake8-self (private member access)
+    "T10",    # flake8-debugger (breakpoint/pdb/etc)
+    "T20",    # flake8-print
+    "TRY",    # tryceratops (exception handling)
+    "TCH",    # flake8-type-checking
+    "TID",    # flake8-tidy-imports
+    "ISC",    # flake8-implicit-str-concat
+    "ICN",    # flake8-import-conventions
+    "G",      # flake8-logging-format
+    "INP",    # flake8-no-pep420
+    "Q",      # flake8-quotes
+    "RSE",    # flake8-raise
+    "SLOT",   # flake8-slots
+    "PERF",   # Perflint
+    "PGH",    # pygrep-hooks
+    "FLY",    # flynt (f-string conversion)
+    "LOG",    # flake8-logging
+    "DTZ",    # flake8-datetimez
+    "EM",     # flake8-errmsg
+    "FA",     # flake8-future-annotations
+    "EXE",    # flake8-executable
+    "YTT",    # flake8-2020
 ]
 ignore = [
-    "E501",  # line too long (handled by formatter)
+    "E501",     # line too long (handled by formatter)
+    "TRY003",   # long exception messages — fine for a CLI that surfaces them
+    "TRY004",   # raise TypeError — deliberately raise ValueError for user-facing CLI errors
+    "TRY300",   # else in try — matter of style
+    "EM101",    # exception strings as variables — not worth the ceremony for a small CLI
+    "EM102",    # f-string in exception — same
+    "S101",     # assert usage — tests use asserts deliberately
+    "FBT001",   # bool positional argument — Typer callbacks legitimately use these
+    "FBT002",   # bool default value — same
+    "FBT003",   # bool positional in call — acceptable for OOXML attribute setters
+    "DTZ005",   # datetime.now() without tz — local time acceptable for a local tool
+    "TC001",    # move first-party import into TYPE_CHECKING block — too much ceremony
+    "TC002",    # move third-party import into TYPE_CHECKING block — too much ceremony
+    "TC003",    # move std-lib import into TYPE_CHECKING block — too much ceremony
+    "INP001",   # implicit namespace package — tests/ is not a package, intentional
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = [
-    "N802",  # allow lowercase test function names
-    "N806",  # allow camelCase locals that mirror OOXML element names
+    "N802",    # allow lowercase test function names
+    "N806",    # allow camelCase locals that mirror OOXML element names
+    "SLF001",  # tests legitimately access python-pptx private XML members (._p, ._element)
+    "ARG001",  # unused args in fixtures, mocks, and parametrize (keep for readability)
+    "PT011",   # pytest.raises without match — tests are focused, match is not always needed
+    "ERA001",  # commented example content in fixtures is intentional
 ]
 "src/recombinase/cli.py" = [
     "B008",    # Typer requires function calls in arg defaults
@@ -86,6 +133,10 @@ ignore = [
 "src/recombinase/generate.py" = [
     "N806",    # camelCase locals that mirror OOXML element names (pPr, rPr, etc.)
     "N803",    # camelCase parameters that mirror OOXML element names
+    "SLF001",  # legitimately access python-pptx private XML members for lxml surgery
+]
+"src/recombinase/inspect.py" = [
+    "SLF001",  # legitimately access shape._element for OOXML inspection
 ]
 
 [tool.pytest.ini_options]

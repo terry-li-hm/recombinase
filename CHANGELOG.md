@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   followed by two un-bulleted lines. v0.1.10 captures the first existing
   paragraph's `<a:pPr>` AND the first run's `<a:rPr>` BEFORE clearing the
   text frame, then re-injects both into every new paragraph via a new
-  `_apply_preserved_format` helper. Caught on the first real REDACTED template
-  run where `background`, `education`, `languages`, and `key_competencies`
+  `_apply_preserved_format` helper. Caught on the first real-template run
+  where `background`, `education`, `languages`, and `key_competencies`
   all rendered with only one bullet each.
 
 ### Added
@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Table cell population and picture placeholder insertion — now planned
   for v0.1.11. The bullet bug was a higher-priority hot-fix because it
   affected every bullet-list field in every CV output on v0.1.9, and the
-  table/picture features only affect two shapes on the REDACTED template.
+  table/picture features only affect two shapes on the template.
 
 ## [0.1.9] - 2026-04-11
 
