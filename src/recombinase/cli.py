@@ -9,7 +9,6 @@ Subcommands:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -42,8 +41,8 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def _root(
-    version: Optional[bool] = typer.Option(  # noqa: UP045
-        None,
+    version: bool = typer.Option(
+        False,
         "--version",
         "-V",
         callback=_version_callback,
@@ -52,6 +51,71 @@ def _root(
     ),
 ) -> None:
     """Recombinase — template-guided pptx synthesis."""
+
+
+@app.command("new")
+def cmd_new(
+    project_dir: Path = typer.Argument(
+        ...,
+        help="Path to the project directory to create (e.g. a folder in OneDrive).",
+        resolve_path=True,
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Proceed even if the target directory already exists and is non-empty.",
+    ),
+) -> None:
+    """Scaffold a new project directory with template/, cv-data/, and output/ subfolders.
+
+    Creates a conventional folder layout under the given path:
+
+        <project-dir>/
+          template/   — put your .pptx/.pptm template here
+          cv-data/    — put your per-record YAML files here
+          output/     — generated decks will land here
+
+    Safe to run in OneDrive — it's a plain mkdir + README write, no sync surprises.
+    """
+    if project_dir.exists() and any(project_dir.iterdir()) and not force:
+        typer.secho(
+            f"Directory already exists and is not empty: {project_dir} (use --force to proceed)",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    subfolders = ("template", "cv-data", "output")
+    for sub in subfolders:
+        (project_dir / sub).mkdir(parents=True, exist_ok=True)
+
+    readme_path = project_dir / "README.md"
+    if not readme_path.exists():
+        readme_path.write_text(
+            "# Recombinase project\n\n"
+            "This folder was scaffolded by `recombinase new`.\n\n"
+            "## Layout\n\n"
+            "- `template/` — place the source .pptx/.pptm template file here\n"
+            "- `cv-data/` — one YAML file per record (consultant, use case, etc.)\n"
+            "- `output/` — generated decks land here (ignored by default conventions)\n\n"
+            "## Typical workflow\n\n"
+            "```\n"
+            "recombinase inspect template/<your-template>.pptm\n"
+            "recombinase init template/<your-template>.pptm -o template/config.yaml\n"
+            "# edit template/config.yaml to map field names → shape names\n"
+            "# write one .yaml file per record in cv-data/\n"
+            "recombinase generate -c template/config.yaml -d cv-data/ "
+            "-o output/deck.pptx\n"
+            "```\n",
+            encoding="utf-8",
+        )
+
+    typer.secho(f"Created project: {project_dir}", fg=typer.colors.GREEN)
+    for sub in subfolders:
+        typer.echo(f"  {project_dir / sub}")
+    typer.echo("\nNext: place your template file in the template/ folder, then run:")
+    typer.echo(f'  recombinase inspect "{project_dir / "template"}/<your-template>.pptm"')
 
 
 @app.command("inspect")
