@@ -18,9 +18,10 @@ from typing import Any
 import yaml
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.shapes.placeholder import PicturePlaceholder
 from pptx.slide import Slide
 
-from recombinase.config import TemplateConfig
+from recombinase.config import TableConfig, TemplateConfig
 
 # OOXML namespace used by r:id / r:embed / r:link attributes inside shape XML.
 _R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -244,6 +245,112 @@ def _apply_preserved_format(paragraph: Any, pPr_copy: Any, rPr_copy: Any) -> Non
             first_r.insert(0, deepcopy(rPr_copy))
 
 
+def is_picture_placeholder(shape: Any) -> bool:
+    """Return True if the shape is a python-pptx PicturePlaceholder.
+
+    PicturePlaceholders have an `insert_picture(path)` method to embed an
+    image into the placeholder slot, keeping the shape's crop geometry and
+    position. Regular Picture shapes (inserted via `add_picture`) are a
+    different class and need different handling.
+    """
+    return isinstance(shape, PicturePlaceholder)
+
+
+def set_picture(shape: Any, value: Any, base_dir: Path | None = None) -> None:
+    """Insert an image file into a PicturePlaceholder shape.
+
+    `value` is interpreted as a path to an image file. If it's a relative
+    path and `base_dir` is provided, it resolves against `base_dir` (the
+    directory of the YAML record file, typically). Otherwise the path is
+    used as-is.
+
+    Empty string or None is treated as "no picture" and silently no-ops —
+    the placeholder retains whatever it already had (from the source slide
+    inheritance), so leaving a `photo:` field empty keeps the example
+    headshot as a fallback.
+    """
+    if value is None or value == "":
+        return
+
+    image_path = Path(str(value)).expanduser()
+    if not image_path.is_absolute() and base_dir is not None:
+        image_path = (base_dir / image_path).resolve()
+
+    if not image_path.exists():
+        raise FileNotFoundError(f"picture file not found: {image_path}")
+
+    shape.insert_picture(str(image_path))
+
+
+def populate_table(shape: Any, table_config: TableConfig, rows: list[Any]) -> list[str]:
+    """Populate a table shape from a list of row dicts.
+
+    Each element of `rows` is a dict whose keys should match the names in
+    `table_config.columns`. Column values can be scalars or lists; lists
+    are joined with `table_config.list_joiner` to produce multi-line cell
+    text that inherits the template's paragraph-level bullet formatting.
+
+    Returns a list of warning strings (empty if everything populated cleanly).
+    Common warnings:
+    - data has more rows than the template table can hold (truncation)
+    - a row dict is missing a column key (that cell is left blank)
+    - the shape isn't actually a table (recombinase is called on the wrong shape)
+    """
+    warnings: list[str] = []
+
+    if not getattr(shape, "has_table", False):
+        warnings.append(
+            f"shape {shape.name!r} is configured as a table but is not a "
+            "table shape on the template; skipping"
+        )
+        return warnings
+
+    table = shape.table
+    all_rows = list(table.rows)
+    start_row = 1 if table_config.header_row else 0
+    data_rows = all_rows[start_row:]
+
+    if len(rows) > len(data_rows):
+        warnings.append(
+            f"table {shape.name!r} has {len(data_rows)} data rows but "
+            f"{len(rows)} records were provided; truncating to {len(data_rows)}"
+        )
+
+    for row_index, row_dict in enumerate(rows[: len(data_rows)]):
+        target_row = data_rows[row_index]
+        for col_index, column_name in enumerate(table_config.columns):
+            if col_index >= len(target_row.cells):
+                warnings.append(
+                    f"table {shape.name!r} row {row_index} has only "
+                    f"{len(target_row.cells)} cells; column {column_name!r} "
+                    "exceeds the template width, skipping"
+                )
+                continue
+            cell = target_row.cells[col_index]
+            if not isinstance(row_dict, dict):
+                warnings.append(
+                    f"table {shape.name!r} row {row_index}: expected a "
+                    f"dict, got {type(row_dict).__name__}; skipping row"
+                )
+                break
+            value = row_dict.get(column_name)
+            if value is None:
+                continue
+            if isinstance(value, list):
+                items = [str(item) for item in value if item is not None and item != ""]
+                text = table_config.list_joiner.join(items)
+            else:
+                text = str(value)
+            # Preserve cell's existing paragraph formatting just like
+            # _write_paragraphs does for placeholders.
+            if "\n" in text:
+                _write_paragraphs(cell.text_frame, text.split("\n"))
+            else:
+                cell.text_frame.text = text
+
+    return warnings
+
+
 def remove_slide(presentation: Any, slide: Slide) -> None:
     """Remove a slide from the presentation.
 
@@ -349,8 +456,29 @@ def generate_deck(
             if field_name not in record:
                 warnings.append(f"record {record_id!r}: no value for field {field_name!r}")
                 continue
+
+            value = record[field_name]
+
+            # Picture placeholder: route to insert_picture instead of setting text
+            if is_picture_placeholder(shape):
+                try:
+                    record_source = record.get("_recombinase_record_dir")
+                    base_dir = Path(record_source) if isinstance(record_source, str) else None
+                    set_picture(shape, value, base_dir=base_dir)
+                except FileNotFoundError as exc:
+                    warnings.append(
+                        f"record {record_id!r}: picture for {field_name!r} not found: {exc}"
+                    )
+                except Exception as exc:
+                    warnings.append(
+                        f"record {record_id!r}: failed to insert picture "
+                        f"{shape_name!r} ({field_name!r}): {exc}"
+                    )
+                continue
+
+            # Text placeholder: existing path
             try:
-                set_shape_value(shape, record[field_name])
+                set_shape_value(shape, value)
             except Exception as exc:
                 warnings.append(
                     f"record {record_id!r}: failed to set {shape_name!r} ({field_name!r}): {exc}"
@@ -360,7 +488,7 @@ def generate_deck(
             # Overflow heuristic: compare new text length against source baseline.
             baseline = baselines.get(field_name, 0)
             if baseline > 0:
-                new_length = _value_char_length(record[field_name])
+                new_length = _value_char_length(value)
                 if new_length > baseline * config.overflow_ratio:
                     ratio = new_length / baseline
                     warnings.append(
@@ -368,6 +496,37 @@ def generate_deck(
                         f"{ratio:.1f}x the source baseline ({new_length} vs "
                         f"{baseline} chars) — may overflow shape {shape_name!r}"
                     )
+
+        # Tables: populate from config.tables using the record's list-of-dicts data
+        for table_field_name, table_config in config.tables.items():
+            table_shape = find_shape_by_name(new_slide, table_config.shape)
+            if table_shape is None:
+                warnings.append(
+                    f"record {record_id!r}: table shape {table_config.shape!r} "
+                    "not found on new slide"
+                )
+                continue
+            if table_field_name not in record:
+                warnings.append(f"record {record_id!r}: no value for table {table_field_name!r}")
+                continue
+            table_value = record[table_field_name]
+            if not isinstance(table_value, list):
+                warnings.append(
+                    f"record {record_id!r}: table {table_field_name!r} expects "
+                    f"a list of row dicts, got {type(table_value).__name__}"
+                )
+                continue
+            try:
+                table_warnings = populate_table(table_shape, table_config, table_value)
+            except Exception as exc:
+                warnings.append(
+                    f"record {record_id!r}: failed to populate table "
+                    f"{table_config.shape!r} ({table_field_name!r}): {exc}"
+                )
+                continue
+            warnings.extend(
+                f"record {record_id!r}: {tw}" for tw in table_warnings
+            )
 
         generated_count += 1
 
