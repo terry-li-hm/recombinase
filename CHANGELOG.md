@@ -5,6 +5,38 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-04-11
+
+### Added
+
+- **`recombinase validate`** — pre-flight check that cross-references a
+  config against its template. Verifies the config loads, the template
+  exists, every configured shape name is actually present on the source
+  slide, and reports any template shapes that aren't mapped. Surfaces the
+  field name alongside missing shapes so you can see exactly which
+  placeholder key maps to the broken shape name. Exit 0 on clean, 1 on
+  missing shapes, 2 on unused shapes if `--strict`. Zero-arg auto-detect
+  matches the other commands: run it inside a scaffolded project and it
+  picks up `./template/config.yaml`.
+- **`recombinase generate --dry-run`** — simulate the full pipeline
+  (load config, load records, duplicate slides, set values, collect
+  warnings) but do NOT write the output pptx. Ignores the overwrite
+  guard since nothing is being written. Use this to preview overflow and
+  missing-field warnings before committing to a real run.
+- 11 new tests (83 → 94) covering validate happy path, missing-shape
+  errors, unused-shape warnings, --strict escalation, auto-detect,
+  dry-run output suppression, dry-run warning surfacing, dry-run
+  overwrite-guard bypass.
+
+### Why these two
+
+From the v0.1.7 brainstorm's "11 possible features" list, these are the
+only two that meaningfully bite before the first real run. The others
+(extract mode, watch mode, PDF export, multi-template, etc.) depend on
+usage-driven signal that doesn't exist yet. Shipping them speculatively
+would violate `feedback_simplify_dont_engineer.md`. Revisit after
+the first pack's first real use.
+
 ## [0.1.7] - 2026-04-11
 
 ### Added

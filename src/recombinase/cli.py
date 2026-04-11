@@ -304,6 +304,110 @@ def cmd_init(
     )
 
 
+@app.command("validate")
+def cmd_validate(
+    config: Path = typer.Option(
+        None,
+        "--config",
+        "-c",
+        resolve_path=True,
+        help=(
+            "Path to the template config YAML. Defaults to "
+            "`./template/config.yaml` when run inside a scaffolded project."
+        ),
+    ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Exit non-zero if unused shapes are present in the template.",
+    ),
+) -> None:
+    """Validate a config against its template — pre-flight check before generate.
+
+    Verifies that:
+    - the config loads (YAML is well-formed, required fields present)
+    - the template file exists and is readable
+    - every shape name in `placeholders` exists on the configured source slide
+    - reports which template shapes are NOT mapped (unused)
+
+    Catches typos (`Consultant_Name` vs `Consultant Name`) and stale configs
+    (shapes renamed in the template) before you generate 15 broken slides.
+    Exit 0 on success, 1 on missing shapes, 2 on unused shapes if --strict.
+    """
+    cwd = Path.cwd()
+    if config is None:
+        candidate = cwd / "template" / "config.yaml"
+        if not candidate.is_file():
+            typer.secho(
+                "No --config specified and ./template/config.yaml not found. "
+                "Run `recombinase init` first or pass --config explicitly.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        config = candidate.resolve()
+
+    typer.secho(f"Loading config: '{config}'", fg=typer.colors.CYAN)
+    cfg = load_config(config)
+
+    typer.secho(f"Inspecting template: '{cfg.template}'", fg=typer.colors.CYAN)
+    info = inspect_template(cfg.template)
+
+    template_shape_names = set(shape_names_from_slide(info, cfg.source_slide_index))
+    config_shape_names = set(cfg.placeholders.values())
+
+    missing_shapes = config_shape_names - template_shape_names
+    unused_shapes = template_shape_names - config_shape_names
+
+    # Surface matched shapes for context
+    matched = config_shape_names & template_shape_names
+    typer.secho(
+        f"Matched {len(matched)}/{len(config_shape_names)} configured shapes.",
+        fg=typer.colors.GREEN if not missing_shapes else typer.colors.YELLOW,
+    )
+
+    if missing_shapes:
+        typer.secho(
+            f"\nMissing shapes ({len(missing_shapes)}): configured in the "
+            "placeholders map but NOT found on the template's source slide.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        for shape_name in sorted(missing_shapes):
+            field_names = [
+                field for field, shape in cfg.placeholders.items() if shape == shape_name
+            ]
+            typer.secho(
+                f"  - '{shape_name}' (mapped from field: {', '.join(field_names)})",
+                fg=typer.colors.RED,
+                err=True,
+            )
+        typer.secho(
+            "\nFix: rename the shape in the template OR update the config "
+            "right-hand side to match. Run `recombinase inspect` to see "
+            "the actual shape names.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if unused_shapes:
+        typer.secho(
+            f"\nUnused shapes ({len(unused_shapes)}): present on the template "
+            "but not mapped in the config. These will be inherited as-is "
+            "(example text stays in place unless you add them to placeholders).",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        for shape_name in sorted(unused_shapes):
+            typer.secho(f"  - '{shape_name}'", fg=typer.colors.YELLOW, err=True)
+
+        if strict:
+            raise typer.Exit(code=2)
+
+    typer.secho("\nConfig is valid.", fg=typer.colors.GREEN)
+
+
 @app.command("generate")
 def cmd_generate(
     config: Path = typer.Option(
@@ -350,12 +454,24 @@ def cmd_generate(
             "warnings. Default: warnings print but exit 0."
         ),
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help=(
+            "Simulate the full pipeline (load config, load records, "
+            "validate shape mappings, report warnings) but do NOT write "
+            "the output pptx. Use this to preview warnings before a "
+            "real run."
+        ),
+    ),
 ) -> None:
     """Generate a populated pptx deck from a template + YAML data directory.
 
     With no arguments, resolves defaults against the `recombinase new`
     scaffolded layout (./template/config.yaml, ./cv-data/, ./output/deck.pptx)
     so you can `cd` into the project and just run `recombinase generate`.
+
+    Pass `--dry-run` to preview without writing.
     """
     cwd = Path.cwd()
 
@@ -398,7 +514,8 @@ def cmd_generate(
             err=True,
         )
 
-    if output.exists() and not force:
+    # Overwrite guard only applies to real runs, not dry-runs.
+    if not dry_run and output.exists() and not force:
         typer.secho(
             f"Output file already exists: '{output}' (use --force to overwrite)",
             fg=typer.colors.RED,
@@ -406,7 +523,8 @@ def cmd_generate(
         )
         raise typer.Exit(code=1)
 
-    output.parent.mkdir(parents=True, exist_ok=True)
+    if not dry_run:
+        output.parent.mkdir(parents=True, exist_ok=True)
 
     typer.secho(f"Loading config: '{config}'", fg=typer.colors.CYAN)
     cfg = load_config(config)
@@ -422,14 +540,36 @@ def cmd_generate(
         )
         raise typer.Exit(code=1)
 
-    typer.secho(
-        f"Generating {len(records)} slide(s) from '{cfg.template.name}'...",
-        fg=typer.colors.CYAN,
-    )
-    result = generate_deck(cfg, records, output)
+    if dry_run:
+        typer.secho(
+            f"DRY RUN: would generate {len(records)} slide(s) from "
+            f"'{cfg.template.name}' -> '{output}'",
+            fg=typer.colors.CYAN,
+        )
+        # Pipe through a tmp path so generate_deck's save doesn't touch the
+        # real output; caller still gets the same warning list.
+        import tempfile
 
-    typer.secho(f"Generated: '{result['output']}'", fg=typer.colors.GREEN)
-    typer.echo(f"Records: {result['records_generated']}")
+        tmp_output = Path(tempfile.mkdtemp()) / "dry-run.pptx"
+        result = generate_deck(cfg, records, tmp_output)
+        if tmp_output.exists():
+            tmp_output.unlink()
+        tmp_output.parent.rmdir()
+
+        typer.secho(
+            f"DRY RUN complete. Would have written: '{output}'",
+            fg=typer.colors.CYAN,
+        )
+        typer.echo(f"Records that would be generated: {result['records_generated']}")
+    else:
+        typer.secho(
+            f"Generating {len(records)} slide(s) from '{cfg.template.name}'...",
+            fg=typer.colors.CYAN,
+        )
+        result = generate_deck(cfg, records, output)
+
+        typer.secho(f"Generated: '{result['output']}'", fg=typer.colors.GREEN)
+        typer.echo(f"Records: {result['records_generated']}")
 
     if result["warnings"]:
         typer.secho(
