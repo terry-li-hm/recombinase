@@ -5,6 +5,40 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.14] - 2026-04-12
+
+### Added
+
+- **Sectioned-list shapes: `sections:` config block.** A new render
+  primitive for shapes that stack multiple "header + bullets" groups
+  into a single text frame. Real-world driver: the client CV "Key
+  Competencies" cell with four named sections — FS Industry,
+  Functional, Technical, Methodical — each with a variable-length list
+  of bullet items under a distinct header style. YAML schema:
+
+  ```yaml
+  sections:
+    key_competencies:
+      shape: Key_Competencies
+      header_index: 0   # template paragraph to capture header style from
+      bullet_index: 1   # template paragraph to capture bullet style from
+  ```
+
+  Record data is a list of `{header, items}` dicts. `populate_sections`
+  captures pPr + first-run rPr from the two configured template
+  paragraphs (defaults: 0 and 1), clears the text frame, and re-emits
+  alternating profiles in the order prescribed by the record. Template
+  must seed at least two styled example paragraphs so both profiles
+  can be captured.
+- New `SectionConfig` dataclass in `recombinase.config`.
+- `TemplateConfig.validate()` accepts a config that only has
+  `sections:` (matches the tables relaxation from v0.1.12) and rejects
+  `header_index == bullet_index`.
+- 5 new regression tests covering: full four-section render with
+  header/bullet profile preservation, index-out-of-range warning,
+  malformed-section skip semantics, config round-trip with defaults,
+  and end-to-end `generate_deck` sectioned populate. 154 → 160 tests.
+
 ## [0.1.13] - 2026-04-12
 
 ### Fixed

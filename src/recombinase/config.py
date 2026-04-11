@@ -49,6 +49,41 @@ class TableConfig:
 
 
 @dataclass
+class SectionConfig:
+    """Configuration for populating a "sectioned list" shape.
+
+    A sectioned list is a single text frame that renders N groups, each
+    with one header paragraph followed by a variable-length list of
+    bullet paragraphs. Real-world example: a CV "Key Competencies" cell
+    with four sections — FS Industry, Functional, Technical, Methodical
+    — where each section header uses a distinct bold/unbulleted style
+    and the items below it inherit a bulleted list style.
+
+    One `SectionConfig` per sectioned-list shape. The record's data for
+    this field is expected to be a list of dicts, each with keys
+    ``header`` (string) and ``items`` (list of strings).
+
+    Rendering strategy: the template cell must already contain at least
+    two styled example paragraphs — one at ``header_index`` showing the
+    header profile (pPr + run rPr), and one at ``bullet_index`` showing
+    the bullet profile. `populate_sections` captures both profiles
+    before clearing, then emits paragraphs alternating between them in
+    the order prescribed by the record data.
+    """
+
+    shape: str
+    """The `.Name` of the text frame shape on the source slide."""
+
+    header_index: int = 0
+    """Zero-based index of the template paragraph whose pPr + first-run
+    rPr define the *header* profile. Defaults to 0 (first paragraph)."""
+
+    bullet_index: int = 1
+    """Zero-based index of the template paragraph whose pPr + first-run
+    rPr define the *bullet* profile. Defaults to 1 (second paragraph)."""
+
+
+@dataclass
 class TemplateConfig:
     """Per-template configuration declaring shape name <-> data field mapping.
 
@@ -82,6 +117,14 @@ class TemplateConfig:
     """Mapping from data field name to a `TableConfig`. Used when a record's
     data for a field is a list of dicts and the target shape is a table."""
 
+    sections: dict[str, SectionConfig] = field(default_factory=dict)
+    """Mapping from data field name to a `SectionConfig`. Used when a record's
+    data for a field is a list of {header, items} dicts and the target
+    shape is a single text frame that should render as a sectioned list
+    (header paragraph followed by bullet paragraphs, repeated per section).
+    Real-world example: the CV "Key Competencies" cell with four named
+    sections — FS Industry, Functional, Technical, Methodical."""
+
     clear_source_slide: bool = True
     """If True, the source (example) slide is removed from the final output
     so only the generated per-record slides remain."""
@@ -98,11 +141,27 @@ class TemplateConfig:
             errors.append(f"Template file not found: {self.template}")
         if self.source_slide_index < 1:
             errors.append(f"source_slide_index must be >= 1 (got {self.source_slide_index})")
-        if not self.placeholders and not self.tables:
+        if not self.placeholders and not self.tables and not self.sections:
             errors.append(
-                "config has no placeholders and no tables — at least one of "
-                "them must be populated, otherwise recombinase has nothing to do"
+                "config has no placeholders, tables, or sections — at least "
+                "one of them must be populated, otherwise recombinase has "
+                "nothing to do"
             )
+        for field_name, section in self.sections.items():
+            if section.header_index < 0:
+                errors.append(
+                    f"sections.{field_name}.header_index must be >= 0 (got {section.header_index})"
+                )
+            if section.bullet_index < 0:
+                errors.append(
+                    f"sections.{field_name}.bullet_index must be >= 0 (got {section.bullet_index})"
+                )
+            if section.header_index == section.bullet_index:
+                errors.append(
+                    f"sections.{field_name}.header_index and bullet_index "
+                    f"must differ (both are {section.header_index}); the two "
+                    "profiles need to come from distinct template paragraphs"
+                )
         return errors
 
 
@@ -227,11 +286,47 @@ def load_config(path: Path | str) -> TemplateConfig:
             list_joiner=list_joiner_raw,
         )
 
+    sections_raw = data.get("sections")
+    if sections_raw is None:
+        sections_raw = {}
+    if not isinstance(sections_raw, dict):
+        raise ValueError(f"{path}: 'sections' must be a mapping, got {type(sections_raw).__name__}")
+    sections: dict[str, SectionConfig] = {}
+    for field_name, section_data in sections_raw.items():
+        if not isinstance(field_name, str):
+            raise ValueError(
+                f"{path}: 'sections' keys must be strings, got {type(field_name).__name__}"
+            )
+        if not isinstance(section_data, dict):
+            raise ValueError(
+                f"{path}: 'sections.{field_name}' must be a mapping, got "
+                f"{type(section_data).__name__}"
+            )
+        section_shape_raw = section_data.get("shape")
+        if not isinstance(section_shape_raw, str):
+            raise ValueError(f"{path}: 'sections.{field_name}.shape' must be a string")
+        header_index_raw = section_data.get("header_index", 0)
+        if not isinstance(header_index_raw, int) or isinstance(header_index_raw, bool):
+            raise ValueError(
+                f"{path}: 'sections.{field_name}.header_index' must be a non-negative integer"
+            )
+        bullet_index_raw = section_data.get("bullet_index", 1)
+        if not isinstance(bullet_index_raw, int) or isinstance(bullet_index_raw, bool):
+            raise ValueError(
+                f"{path}: 'sections.{field_name}.bullet_index' must be a non-negative integer"
+            )
+        sections[field_name] = SectionConfig(
+            shape=section_shape_raw,
+            header_index=header_index_raw,
+            bullet_index=bullet_index_raw,
+        )
+
     config = TemplateConfig(
         template=template_path,
         source_slide_index=source_slide_index_raw,
         placeholders=dict(placeholders_raw),
         tables=tables,
+        sections=sections,
         clear_source_slide=clear_source_slide_raw,
         overflow_ratio=float(overflow_ratio_raw),
     )

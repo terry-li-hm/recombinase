@@ -20,12 +20,13 @@ import yaml
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
-from recombinase.config import TableConfig, load_config
+from recombinase.config import SectionConfig, TableConfig, load_config
 from recombinase.generate import (
     find_shape_by_name,
     generate_deck,
     is_picture_placeholder,
     load_records,
+    populate_sections,
     populate_table,
     set_picture,
 )
@@ -602,3 +603,242 @@ def test_populate_table_preserves_cell_run_font_size(tmp_path: Path) -> None:
     assert role_cell_row2.text == "Advisor"
     run2 = role_cell_row2.text_frame.paragraphs[0].runs[0]
     assert run2.font.size == Pt(7)
+
+
+# -- populate_sections: sectioned-list shapes (v0.1.14) --------------------
+
+
+def _build_template_with_sectioned_shape(path: Path) -> None:
+    """Build a template with a text box whose first two paragraphs carry
+    distinct header vs bullet styles (bold 11pt header, normal 9pt bullet).
+
+    Mirrors the real-world "Key Competencies" CV cell: four headers
+    (FS Industry, Functional, Technical, Methodical), each followed by
+    a variable number of bulleted items. We seed paragraph 0 with the
+    header profile and paragraph 1 with the bullet profile so
+    `populate_sections` can capture both.
+    """
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    txbox = slide.shapes.add_textbox(
+        left=Inches(0.5), top=Inches(0.5), width=Inches(8), height=Inches(5)
+    )
+    txbox.name = "Key_Competencies"
+    tf = txbox.text_frame
+    # Paragraph 0: header profile (bold, 11pt)
+    tf.text = "FS Industry"
+    header_run = tf.paragraphs[0].runs[0]
+    header_run.font.size = Pt(11)
+    header_run.font.bold = True
+    # Paragraph 1: bullet profile (9pt, not bold)
+    bullet_p = tf.add_paragraph()
+    bullet_p.text = "Wealth Management"
+    bullet_run = bullet_p.runs[0]
+    bullet_run.font.size = Pt(9)
+    bullet_run.font.bold = False
+    prs.save(str(path))
+
+
+def test_populate_sections_renders_header_and_bullet_profiles(tmp_path: Path) -> None:
+    """Four sections, each with 2-3 bullets, render with correct profiles.
+
+    Asserts that every header paragraph carries the captured 11pt bold
+    profile and every bullet paragraph carries the captured 9pt non-bold
+    profile, for the whole sectioned-list emission.
+    """
+    template_path = tmp_path / "sections.pptx"
+    _build_template_with_sectioned_shape(template_path)
+
+    prs = Presentation(str(template_path))
+    shape = find_shape_by_name(prs.slides[0], "Key_Competencies")
+    assert shape is not None
+
+    section_config = SectionConfig(shape="Key_Competencies")
+    sections_data = [
+        {"header": "FS Industry", "items": ["Wealth Management", "Retail Banking"]},
+        {"header": "Functional", "items": ["Risk Management", "Compliance", "Audit"]},
+        {"header": "Technical", "items": ["Python", "PySpark"]},
+        {"header": "Methodical", "items": ["Agile", "Waterfall"]},
+    ]
+
+    warnings = populate_sections(shape, section_config, sections_data)
+    assert warnings == []
+
+    paragraphs = list(shape.text_frame.paragraphs)
+    # Expected emission: 4 headers + 2+3+2+2 bullets = 13 paragraphs
+    assert len(paragraphs) == 13
+
+    expected = [
+        ("FS Industry", True),
+        ("Wealth Management", False),
+        ("Retail Banking", False),
+        ("Functional", True),
+        ("Risk Management", False),
+        ("Compliance", False),
+        ("Audit", False),
+        ("Technical", True),
+        ("Python", False),
+        ("PySpark", False),
+        ("Methodical", True),
+        ("Agile", False),
+        ("Waterfall", False),
+    ]
+    for paragraph, (text, is_header) in zip(paragraphs, expected, strict=True):
+        assert paragraph.text == text
+        run = paragraph.runs[0]
+        if is_header:
+            assert run.font.size == Pt(11), f"header {text!r} lost font size: got {run.font.size}"
+            assert run.font.bold is True, f"header {text!r} lost bold"
+        else:
+            assert run.font.size == Pt(9), f"bullet {text!r} lost font size: got {run.font.size}"
+            assert run.font.bold is False, f"bullet {text!r} gained bold"
+
+
+def test_populate_sections_warns_on_index_out_of_range(tmp_path: Path) -> None:
+    """header_index / bullet_index past the template's paragraph count warn."""
+    template_path = tmp_path / "sections_short.pptx"
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    txbox = slide.shapes.add_textbox(
+        left=Inches(0.5), top=Inches(0.5), width=Inches(8), height=Inches(1)
+    )
+    txbox.name = "Short"
+    txbox.text_frame.text = "Only one paragraph"
+    prs.save(str(template_path))
+
+    prs2 = Presentation(str(template_path))
+    shape = find_shape_by_name(prs2.slides[0], "Short")
+    assert shape is not None
+
+    # bullet_index=1 but template has only paragraph 0
+    section_config = SectionConfig(shape="Short", header_index=0, bullet_index=1)
+    warnings = populate_sections(shape, section_config, [{"header": "A", "items": ["x"]}])
+    assert any("bullet_index=1" in w for w in warnings)
+
+
+def test_populate_sections_skips_malformed_sections(tmp_path: Path) -> None:
+    """Non-dict sections, missing headers, and non-list items are warned and
+    handled without killing the whole populate."""
+    template_path = tmp_path / "sections.pptx"
+    _build_template_with_sectioned_shape(template_path)
+
+    prs = Presentation(str(template_path))
+    shape = find_shape_by_name(prs.slides[0], "Key_Competencies")
+    assert shape is not None
+
+    sections_data = [
+        {"header": "Good", "items": ["one"]},
+        "not a dict",  # -> warn + skip
+        {"items": ["orphan"]},  # missing header -> warn + skip
+        {"header": "Also Good", "items": "not a list"},  # -> warn, render header only
+    ]
+    warnings = populate_sections(shape, SectionConfig(shape="Key_Competencies"), sections_data)
+    assert any("not a dict" in w or "section 1" in w for w in warnings)
+    assert any("header" in w for w in warnings)
+    assert any("'items' must be a list" in w for w in warnings)
+
+    paragraphs = list(shape.text_frame.paragraphs)
+    # Emission: "Good", "one", "Also Good" (3 paragraphs)
+    assert [p.text for p in paragraphs] == ["Good", "one", "Also Good"]
+
+
+def test_load_config_parses_sections_block(tmp_path: Path) -> None:
+    """`sections:` block round-trips through load_config with defaults."""
+    template_path = tmp_path / "t.pptx"
+    Presentation().save(str(template_path))
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "template": str(template_path),
+                "sections": {
+                    "key_competencies": {
+                        "shape": "Key_Competencies",
+                    },
+                    "key_competencies_custom": {
+                        "shape": "KC2",
+                        "header_index": 2,
+                        "bullet_index": 5,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = load_config(config_path)
+    assert "key_competencies" in config.sections
+    assert config.sections["key_competencies"].shape == "Key_Competencies"
+    assert config.sections["key_competencies"].header_index == 0
+    assert config.sections["key_competencies"].bullet_index == 1
+    assert config.sections["key_competencies_custom"].header_index == 2
+    assert config.sections["key_competencies_custom"].bullet_index == 5
+
+
+def test_load_config_rejects_equal_header_and_bullet_index(tmp_path: Path) -> None:
+    """header_index == bullet_index fails validation with a clear message."""
+    import pytest
+
+    template_path = tmp_path / "t.pptx"
+    Presentation().save(str(template_path))
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "template": str(template_path),
+                "sections": {
+                    "kc": {
+                        "shape": "KC",
+                        "header_index": 3,
+                        "bullet_index": 3,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="header_index and bullet_index"):
+        load_config(config_path)
+
+
+def test_generate_deck_populates_sections_end_to_end(tmp_path: Path) -> None:
+    """End-to-end: template + record with sections renders into the output."""
+    template_path = tmp_path / "deck.pptx"
+    _build_template_with_sectioned_shape(template_path)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "template": str(template_path),
+                "source_slide_index": 1,
+                "sections": {
+                    "key_competencies": {"shape": "Key_Competencies"},
+                },
+                "clear_source_slide": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = load_config(config_path)
+
+    record = {
+        "id": "alice",
+        "key_competencies": [
+            {"header": "FS Industry", "items": ["Retail"]},
+            {"header": "Functional", "items": ["Risk", "Audit"]},
+        ],
+    }
+    output_path = tmp_path / "out.pptx"
+    result = generate_deck(config, [record], output_path)
+    assert result["records_generated"] == 1
+    assert not any("failed" in w or "not found" in w for w in result["warnings"])
+
+    prs_out = Presentation(str(output_path))
+    # Source slide at index 0, generated at index 1 (clear_source_slide=False)
+    new_slide = prs_out.slides[1]
+    shape = find_shape_by_name(new_slide, "Key_Competencies")
+    assert shape is not None
+    texts = [p.text for p in shape.text_frame.paragraphs]
+    assert texts == ["FS Industry", "Retail", "Functional", "Risk", "Audit"]

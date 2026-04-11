@@ -21,7 +21,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.shapes.placeholder import PicturePlaceholder
 from pptx.slide import Slide
 
-from recombinase.config import TableConfig, TemplateConfig
+from recombinase.config import SectionConfig, TableConfig, TemplateConfig
 
 # OOXML namespace used by r:id / r:embed / r:link attributes inside shape XML.
 _R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -255,6 +255,156 @@ def _apply_preserved_format(paragraph: Any, pPr_copy: Any, rPr_copy: Any) -> Non
             if existing_rPr is not None:
                 first_r.remove(existing_rPr)
             first_r.insert(0, deepcopy(rPr_copy))
+
+
+def _capture_paragraph_profile(paragraphs: Any, index: int) -> tuple[Any | None, Any | None]:
+    """Capture a (pPr, first-run rPr) style profile from a specific paragraph.
+
+    Returns deep-copied XML elements so the caller can safely reuse them
+    after the containing text frame is cleared. Either element may be
+    None if the source paragraph doesn't have a pPr (uses layout defaults)
+    or has no runs (empty paragraph). Index out of range also returns
+    (None, None) — the caller should fall back or warn.
+
+    This is the machinery behind `populate_sections`: a sectioned-list
+    shape has two distinct visual styles (header, bullet) encoded in
+    different paragraphs of the template example; capturing both before
+    `tf.clear()` lets us re-emit alternating profiles as we populate.
+    """
+    from pptx.oxml.ns import qn
+
+    if index < 0 or index >= len(paragraphs):
+        return None, None
+    target_p_xml = paragraphs[index]._p
+    pPr = target_p_xml.find(qn("a:pPr"))
+    pPr_copy = deepcopy(pPr) if pPr is not None else None
+    first_r = target_p_xml.find(qn("a:r"))
+    rPr_copy = None
+    if first_r is not None:
+        rPr = first_r.find(qn("a:rPr"))
+        if rPr is not None:
+            rPr_copy = deepcopy(rPr)
+    return pPr_copy, rPr_copy
+
+
+def populate_sections(
+    shape: Any, section_config: SectionConfig, sections_data: list[Any]
+) -> list[str]:
+    """Populate a sectioned-list shape from a list of {header, items} dicts.
+
+    The template shape must be a text frame whose example paragraphs
+    encode the intended visual profile for headers (at
+    ``section_config.header_index``) and bullets (at
+    ``section_config.bullet_index``). This function captures both
+    profiles, clears the text frame, then re-emits paragraphs in the
+    order prescribed by `sections_data`:
+
+        for each section in sections_data:
+            emit one header paragraph (header profile)
+            emit N bullet paragraphs (bullet profile), one per item
+
+    Returns a list of warning strings (empty on clean populate). Common
+    warnings:
+    - shape has no text frame (misrouted config)
+    - template has fewer paragraphs than the configured indices reach
+    - a section entry is not a dict or is missing header/items
+    - header profile or bullet profile could not be captured (template
+      example paragraph is empty)
+
+    On a completely empty `sections_data` the text frame is cleared.
+    """
+    warnings: list[str] = []
+
+    if not getattr(shape, "has_text_frame", False):
+        warnings.append(
+            f"shape {shape.name!r} is configured as a sectioned list but has "
+            "no text frame; skipping"
+        )
+        return warnings
+
+    tf = shape.text_frame
+    paragraphs = list(tf.paragraphs)
+
+    if section_config.header_index >= len(paragraphs):
+        warnings.append(
+            f"shape {shape.name!r}: header_index={section_config.header_index} "
+            f"but template has only {len(paragraphs)} paragraph(s); cannot "
+            "capture header style profile"
+        )
+        return warnings
+    if section_config.bullet_index >= len(paragraphs):
+        warnings.append(
+            f"shape {shape.name!r}: bullet_index={section_config.bullet_index} "
+            f"but template has only {len(paragraphs)} paragraph(s); cannot "
+            "capture bullet style profile"
+        )
+        return warnings
+
+    header_pPr, header_rPr = _capture_paragraph_profile(paragraphs, section_config.header_index)
+    bullet_pPr, bullet_rPr = _capture_paragraph_profile(paragraphs, section_config.bullet_index)
+    if header_pPr is None and header_rPr is None:
+        warnings.append(
+            f"shape {shape.name!r}: template paragraph at header_index="
+            f"{section_config.header_index} has no pPr or runs; header style "
+            "will fall back to defaults"
+        )
+    if bullet_pPr is None and bullet_rPr is None:
+        warnings.append(
+            f"shape {shape.name!r}: template paragraph at bullet_index="
+            f"{section_config.bullet_index} has no pPr or runs; bullet style "
+            "will fall back to defaults"
+        )
+
+    # Build the flat emission plan: list of (text, pPr, rPr) tuples.
+    # Validation is lenient (warn and skip malformed sections) so one bad
+    # section doesn't nuke the whole placeholder.
+    plan: list[tuple[str, Any, Any]] = []
+    for section_index, section in enumerate(sections_data):
+        if not isinstance(section, dict):
+            warnings.append(
+                f"shape {shape.name!r}: section {section_index} is "
+                f"{type(section).__name__}, expected a dict with 'header' and "
+                "'items'; skipping"
+            )
+            continue
+        header_text = section.get("header")
+        items_value = section.get("items", [])
+        if not isinstance(header_text, str) or header_text == "":
+            warnings.append(
+                f"shape {shape.name!r}: section {section_index} is missing "
+                "a non-empty 'header' string; skipping"
+            )
+            continue
+        if not isinstance(items_value, list):
+            warnings.append(
+                f"shape {shape.name!r}: section {section_index} ({header_text!r}): "
+                f"'items' must be a list, got {type(items_value).__name__}; "
+                "rendering header alone"
+            )
+            items_value = []
+        plan.append((header_text, header_pPr, header_rPr))
+        for item in items_value:
+            if item is None or item == "":
+                continue
+            plan.append((str(item), bullet_pPr, bullet_rPr))
+
+    if not plan:
+        tf.clear()
+        return warnings
+
+    tf.clear()
+    # After clear() there is exactly one empty paragraph to reuse.
+    first_p = tf.paragraphs[0]
+    first_text, first_pPr_copy, first_rPr_copy = plan[0]
+    first_p.text = first_text
+    _apply_preserved_format(first_p, first_pPr_copy, first_rPr_copy)
+
+    for text, pPr_copy, rPr_copy in plan[1:]:
+        new_p = tf.add_paragraph()
+        new_p.text = text
+        _apply_preserved_format(new_p, pPr_copy, rPr_copy)
+
+    return warnings
 
 
 def is_picture_placeholder(shape: Any) -> bool:
@@ -606,6 +756,40 @@ def generate_deck(
                 )
                 continue
             warnings.extend(f"record {record_id!r}: {tw}" for tw in table_warnings)
+
+        # Sections: populate from config.sections using the record's list-of-
+        # {header, items} dicts. A "section" is a header paragraph followed
+        # by N bullet paragraphs, and N sections can stack in one text frame.
+        for section_field_name, section_config in config.sections.items():
+            section_shape = find_shape_by_name(new_slide, section_config.shape)
+            if section_shape is None:
+                warnings.append(
+                    f"record {record_id!r}: section shape "
+                    f"{section_config.shape!r} not found on new slide"
+                )
+                continue
+            if section_field_name not in record:
+                warnings.append(
+                    f"record {record_id!r}: no value for section {section_field_name!r}"
+                )
+                continue
+            section_value = record[section_field_name]
+            if not isinstance(section_value, list):
+                warnings.append(
+                    f"record {record_id!r}: section {section_field_name!r} "
+                    f"expects a list of {{header, items}} dicts, got "
+                    f"{type(section_value).__name__}"
+                )
+                continue
+            try:
+                section_warnings = populate_sections(section_shape, section_config, section_value)
+            except Exception as exc:
+                warnings.append(
+                    f"record {record_id!r}: failed to populate sections "
+                    f"{section_config.shape!r} ({section_field_name!r}): {exc}"
+                )
+                continue
+            warnings.extend(f"record {record_id!r}: {sw}" for sw in section_warnings)
 
         generated_count += 1
 
