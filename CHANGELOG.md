@@ -5,6 +5,22 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.18] - 2026-04-12
+
+### Added
+
+- **Per-cell structural metadata in `inspect`.** Table shapes now drill
+  into each cell and report `paras=N runs=M brs=K chars=C` for the
+  first paragraph, plus a ★ marker when the cell matches the
+  dual-run-br idiom (one paragraph, ≥2 runs, ≥1 soft break) that
+  `populate_table` preserves on write. Used to diagnose why the CV
+  "Client & Project" column renders non-italic — if a cell shows
+  `paras=2, runs=1, brs=0`, the template was authored with a hard
+  paragraph break (Enter) instead of a soft break (Shift+Enter) and
+  needs a one-time PowerPoint edit.
+- New `CellInfo` dataclass + `is_multirun_br` property exposed from
+  `recombinase.inspect` for programmatic use.
+
 ## [0.1.17] - 2026-04-12
 
 ### Added
