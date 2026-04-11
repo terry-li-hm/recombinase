@@ -69,8 +69,8 @@ From the v0.1.7 brainstorm's "11 possible features" list, these are the
 only two that meaningfully bite before the first real run. The others
 (extract mode, watch mode, PDF export, multi-template, etc.) depend on
 usage-driven signal that doesn't exist yet. Shipping them speculatively
-would violate `feedback_simplify_dont_engineer.md`. Revisit after
-the first pack's first real use.
+would violate the project's "simplify, don't engineer" discipline.
+Revisit after the first real pack use.
 
 ## [0.1.7] - 2026-04-11
 

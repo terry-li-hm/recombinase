@@ -16,7 +16,7 @@ published under MIT license for anyone who wants it.
 
 - **No real CV content**, no colleague names, no engagement details, no
   client templates committed to this repo.
-- **No REDACTED-internal template files** — the package is tested against
+- **No client-internal template files** — the package is tested against
   synthetic pptx files built programmatically inside the tests.
 - Data processed by the tool lives **on the user's device**, not in the repo.
   The README explicitly documents a OneDrive-side project layout for this.
