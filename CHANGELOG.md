@@ -5,6 +5,40 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-04-11
+
+### Added
+
+- **Zero-argument workflow inside a scaffolded project.** Every command now
+  has sensible defaults so a user inside a `recombinase new` project folder
+  can run:
+  ```
+  recombinase inspect     # auto-detects ./template/*.pptx or *.pptm
+  recombinase init        # same, writes config to ./template/config.yaml
+  recombinase generate    # uses ./template/config.yaml, ./cv-data/, ./output/deck.pptx
+  ```
+  No paths required. `recombinase new` → `cd <dir>` → three commands in
+  sequence and you have a populated deck.
+- **`_find_template_in_cwd()`** helper used by `inspect` and `init`. Searches
+  `./template/*.pptm`, `./template/*.pptx`, `./*.pptm`, `./*.pptx` in that
+  order. Returns the unique match or `None` — refuses to guess when
+  multiple candidates exist.
+- **`cmd_generate` default path resolution**: `-c` defaults to
+  `./template/config.yaml`, `-d` defaults to `./cv-data/`, `-o` defaults to
+  `./output/deck.pptx`. Friendly errors when the scaffolded paths are
+  missing, pointing at the next command to run.
+- **`cmd_init` smart output default**: if a `./template/` folder exists
+  (scaffolded layout), the scaffold config is written to
+  `./template/config.yaml`. Otherwise it falls back to
+  `./template-config.yaml` in the current directory.
+- 10 new tests for the auto-detection paths including end-to-end zero-arg
+  `recombinase generate` inside a synthetic scaffolded project.
+
+### Changed
+
+- `inspect` and `init` template argument is now optional (was required).
+  Passing an explicit path still works unchanged.
+
 ## [0.1.6] - 2026-04-11
 
 ### Added

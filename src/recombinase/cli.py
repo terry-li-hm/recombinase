@@ -42,6 +42,45 @@ def _default_project_dir() -> Path:
     return Path.home() / "cv"
 
 
+def _find_template_in_cwd() -> Path | None:
+    """Look for a single .pptx/.pptm file in conventional locations.
+
+    Searches (in order): `./template/*.pptm`, `./template/*.pptx`,
+    `./*.pptm`, `./*.pptx`. Returns the unique match if there is one;
+    returns `None` if no template is found or if more than one candidate
+    exists in any directory (ambiguous — the user must name it explicitly).
+    """
+    cwd = Path.cwd()
+    search_dirs = (cwd / "template", cwd)
+    for search_dir in search_dirs:
+        if not search_dir.is_dir():
+            continue
+        candidates = sorted([*search_dir.glob("*.pptm"), *search_dir.glob("*.pptx")])
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            return None  # ambiguous — refuse to guess
+    return None
+
+
+def _resolve_template_arg(template: Path | None) -> Path:
+    """Return an explicit template path, or auto-detect it, or exit with an error."""
+    if template is not None:
+        return template
+    found = _find_template_in_cwd()
+    if found is None:
+        typer.secho(
+            "No template specified and none auto-detected. Pass a path "
+            "explicitly, or `cd` into a scaffolded project folder (with a "
+            "single .pptx/.pptm inside `template/` or the current directory).",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    typer.secho(f"Auto-detected template: '{found}'", fg=typer.colors.CYAN)
+    return found
+
+
 _WORKFLOW_EPILOG = """\
 [bold]Typical workflow[/bold] (run in order):
 
@@ -167,13 +206,12 @@ def cmd_new(
 @app.command("inspect")
 def cmd_inspect(
     template: Path = typer.Argument(
-        ...,
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
+        None,
+        help=(
+            "Path to a .pptx/.pptm template file. If omitted, recombinase "
+            "looks for a single pptx/pptm in ./template/ or the current dir."
+        ),
         resolve_path=True,
-        help="Path to a .pptx/.pptm template file.",
     ),
 ) -> None:
     """Print structural metadata of a pptx template.
@@ -182,7 +220,11 @@ def cmd_inspect(
     no actual slide text is read or printed, so output is safe to share.
     Run this first on any new template to discover the shape names you'll
     reference in the config's `placeholders:` section.
+
+    With no argument, auto-detects a single pptx/pptm in `./template/` or
+    the current directory — matches the layout created by `recombinase new`.
     """
+    template = _resolve_template_arg(template)
     info = inspect_template(template)
     typer.echo(format_template_info(info))
 
@@ -190,13 +232,12 @@ def cmd_inspect(
 @app.command("init")
 def cmd_init(
     template: Path = typer.Argument(
-        ...,
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
+        None,
+        help=(
+            "Path to a .pptx/.pptm template file. If omitted, recombinase "
+            "looks for a single pptx/pptm in ./template/ or the current dir."
+        ),
         resolve_path=True,
-        help="Path to a .pptx/.pptm template file.",
     ),
     source_slide_index: int = typer.Option(
         1,
@@ -206,10 +247,14 @@ def cmd_init(
         help="1-based index of the slide to read shape names from.",
     ),
     output: Path = typer.Option(
-        Path("template-config.yaml"),
+        None,
         "--output",
         "-o",
-        help="Path to write the scaffold config YAML.",
+        help=(
+            "Path to write the scaffold config YAML. Defaults to "
+            "`./template/config.yaml` if a `template/` folder exists "
+            "(scaffolded layout), otherwise `./template-config.yaml`."
+        ),
     ),
     force: bool = typer.Option(
         False,
@@ -218,7 +263,19 @@ def cmd_init(
         help="Overwrite an existing output file.",
     ),
 ) -> None:
-    """Write a scaffold config YAML from a template's shape names."""
+    """Write a scaffold config YAML from a template's shape names.
+
+    With no arguments, auto-detects the template in `./template/` or the
+    current directory and writes the config next to it. Matches the layout
+    created by `recombinase new`.
+    """
+    template = _resolve_template_arg(template)
+    if output is None:
+        template_dir = Path.cwd() / "template"
+        if template_dir.is_dir():
+            output = template_dir / "config.yaml"
+        else:
+            output = Path("template-config.yaml")
     info = inspect_template(template)
     shape_names = shape_names_from_slide(info, source_slide_index)
 
@@ -250,33 +307,34 @@ def cmd_init(
 @app.command("generate")
 def cmd_generate(
     config: Path = typer.Option(
-        ...,
+        None,
         "--config",
         "-c",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
         resolve_path=True,
-        help="Path to the template config YAML.",
+        help=(
+            "Path to the template config YAML. Defaults to "
+            "`./template/config.yaml` when run inside a scaffolded project."
+        ),
     ),
     data_dir: Path = typer.Option(
-        ...,
+        None,
         "--data-dir",
         "-d",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        readable=True,
         resolve_path=True,
-        help="Directory containing per-record YAML files.",
+        help=(
+            "Directory containing per-record YAML files. Defaults to "
+            "`./cv-data` when run inside a scaffolded project."
+        ),
     ),
     output: Path = typer.Option(
-        ...,
+        None,
         "--output",
         "-o",
         resolve_path=True,
-        help="Path to write the generated pptx.",
+        help=(
+            "Path to write the generated pptx. Defaults to "
+            "`./output/deck.pptx` when run inside a scaffolded project."
+        ),
     ),
     force: bool = typer.Option(
         False,
@@ -293,7 +351,45 @@ def cmd_generate(
         ),
     ),
 ) -> None:
-    """Generate a populated pptx deck from a template + YAML data directory."""
+    """Generate a populated pptx deck from a template + YAML data directory.
+
+    With no arguments, resolves defaults against the `recombinase new`
+    scaffolded layout (./template/config.yaml, ./cv-data/, ./output/deck.pptx)
+    so you can `cd` into the project and just run `recombinase generate`.
+    """
+    cwd = Path.cwd()
+
+    # Auto-default branches: friendly error when the scaffolded path is
+    # missing. Explicit paths passed by the user are not validated here —
+    # load_config and load_records raise their own errors which main()
+    # traps into clean messages.
+    if config is None:
+        candidate = cwd / "template" / "config.yaml"
+        if not candidate.is_file():
+            typer.secho(
+                "No --config specified and ./template/config.yaml not found. "
+                "Run `recombinase init` first or pass --config explicitly.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        config = candidate.resolve()
+
+    if data_dir is None:
+        candidate = cwd / "cv-data"
+        if not candidate.is_dir():
+            typer.secho(
+                "No --data-dir specified and ./cv-data/ not found. "
+                "Create it or pass --data-dir explicitly.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        data_dir = candidate.resolve()
+
+    if output is None:
+        output = (cwd / "output" / "deck.pptx").resolve()
+
     if output.suffix.lower() != ".pptx":
         typer.secho(
             f"Warning: output path '{output}' does not end in .pptx — "
