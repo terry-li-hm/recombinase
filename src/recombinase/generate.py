@@ -208,6 +208,36 @@ def remove_slide(presentation: Any, slide: Slide) -> None:
             return
 
 
+def _value_char_length(value: Any) -> int:
+    """Estimate the text-frame character length a value would occupy."""
+    if value is None or value == "":
+        return 0
+    if isinstance(value, list):
+        items = [str(item) for item in value if item is not None and item != ""]
+        if not items:
+            return 0
+        return sum(len(item) for item in items) + (len(items) - 1)  # inter-para newlines
+    return len(str(value))
+
+
+def _capture_baseline_lengths(
+    source_slide: Slide, placeholder_map: dict[str, str]
+) -> dict[str, int]:
+    """Record the text length of each configured placeholder on the source slide.
+
+    Returned dict maps data field name to the source's current character count.
+    Shapes without a text frame are skipped. These baselines are compared
+    against per-record values to flag probable overflow.
+    """
+    baselines: dict[str, int] = {}
+    for field_name, shape_name in placeholder_map.items():
+        shape = find_shape_by_name(source_slide, shape_name)
+        if shape is None or not getattr(shape, "has_text_frame", False):
+            continue
+        baselines[field_name] = len(shape.text_frame.text or "")
+    return baselines
+
+
 def generate_deck(
     config: TemplateConfig,
     records: list[dict[str, Any]],
@@ -215,7 +245,10 @@ def generate_deck(
 ) -> dict[str, Any]:
     """Generate an output pptx from a template + records.
 
-    Returns a dict summary with counts and any warnings.
+    Returns a dict summary with counts and any warnings. Warnings include
+    missing shapes, missing fields, set-value exceptions, and — when
+    `config.overflow_ratio > 0` — probable overflow cases where a record's
+    field is substantially larger than the source-slide baseline.
     """
     output_path = Path(output_path).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -231,6 +264,14 @@ def generate_deck(
 
     # 1-based -> 0-based
     source_slide = presentation.slides[config.source_slide_index - 1]
+
+    # Capture baseline text lengths BEFORE generation so overflow comparison
+    # is against the original example, not the most recently populated slide.
+    baselines: dict[str, int] = (
+        _capture_baseline_lengths(source_slide, config.placeholders)
+        if config.overflow_ratio > 0
+        else {}
+    )
 
     warnings: list[str] = []
     generated_count = 0
@@ -255,6 +296,19 @@ def generate_deck(
                 warnings.append(
                     f"record {record_id!r}: failed to set {shape_name!r} ({field_name!r}): {exc}"
                 )
+                continue
+
+            # Overflow heuristic: compare new text length against source baseline.
+            baseline = baselines.get(field_name, 0)
+            if baseline > 0:
+                new_length = _value_char_length(record[field_name])
+                if new_length > baseline * config.overflow_ratio:
+                    ratio = new_length / baseline
+                    warnings.append(
+                        f"record {record_id!r}: field {field_name!r} is "
+                        f"{ratio:.1f}x the source baseline ({new_length} vs "
+                        f"{baseline} chars) — may overflow shape {shape_name!r}"
+                    )
 
         generated_count += 1
 

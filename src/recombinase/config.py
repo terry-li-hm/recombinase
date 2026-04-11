@@ -40,6 +40,11 @@ class TemplateConfig:
     """If True, the source (example) slide is removed from the final output
     so only the generated per-record slides remain."""
 
+    overflow_ratio: float = 1.5
+    """If a populated shape's text length is greater than this multiple of
+    the source-example baseline, emit an overflow warning. Set to 0 to
+    disable overflow detection entirely."""
+
     def validate(self) -> list[str]:
         """Return a list of validation error messages, or empty list if OK."""
         errors: list[str] = []
@@ -113,11 +118,20 @@ def load_config(path: Path | str) -> TemplateConfig:
             f"{type(clear_source_slide_raw).__name__}"
         )
 
+    overflow_ratio_raw = data.get("overflow_ratio", 1.5)
+    if isinstance(overflow_ratio_raw, bool) or not isinstance(overflow_ratio_raw, (int, float)):
+        raise ValueError(
+            f"{path}: 'overflow_ratio' must be a number, got {type(overflow_ratio_raw).__name__}"
+        )
+    if overflow_ratio_raw < 0:
+        raise ValueError(f"{path}: 'overflow_ratio' must be >= 0 (got {overflow_ratio_raw})")
+
     config = TemplateConfig(
         template=template_path,
         source_slide_index=source_slide_index_raw,
         placeholders=dict(placeholders_raw),
         clear_source_slide=clear_source_slide_raw,
+        overflow_ratio=float(overflow_ratio_raw),
     )
 
     errors = config.validate()

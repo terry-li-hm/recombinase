@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 
 import typer
@@ -350,56 +351,56 @@ def _print_error(message: str) -> None:
     typer.secho(f"Error: {message}", fg=typer.colors.RED, err=True)
 
 
+def _format_permission_error(exc: BaseException) -> str:
+    target = getattr(exc, "filename", None)
+    if target:
+        return f"Cannot write '{target}': the file may be open in PowerPoint. Close it and re-run."
+    return f"Permission denied: {exc}"
+
+
+def _format_package_not_found(exc: BaseException) -> str:
+    return (
+        f"Not a valid pptx file: {exc}. The file may be corrupt, empty, "
+        "or in a format python-pptx can't read."
+    )
+
+
+# Dispatch table mapping exception classes to (formatter, exit_code) tuples.
+# Order matters — more specific classes must come before their superclasses.
+# Adding a new trap is a one-line addition to this table.
+_Formatter = Callable[[BaseException], str]
+
+_ERROR_HANDLERS: tuple[tuple[type[BaseException], _Formatter, int], ...] = (
+    (PermissionError, _format_permission_error, 1),
+    (PackageNotFoundError, _format_package_not_found, 1),
+    (yaml.YAMLError, lambda exc: f"Invalid YAML: {exc}", 1),
+    (FileNotFoundError, lambda exc: str(exc), 1),
+    (NotADirectoryError, lambda exc: str(exc), 1),
+    (ValueError, lambda exc: str(exc), 1),
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point. Accepts optional argv list for programmatic / test use.
 
-    Traps known failure modes and prints a clean error message instead of
-    a traceback. Set RECOMBINASE_DEBUG=1 to restore the traceback for
-    debugging.
+    Traps known failure modes via `_ERROR_HANDLERS` and prints a clean error
+    message instead of a traceback. Set `RECOMBINASE_DEBUG=1` to restore
+    the traceback for debugging.
     """
     debug = os.environ.get("RECOMBINASE_DEBUG") == "1"
     try:
         app(args=argv, standalone_mode=False)
     except typer.Exit as exc:
         return exc.exit_code
-    except PermissionError as exc:
-        target = getattr(exc, "filename", None)
-        if target:
-            _print_error(
-                f"Cannot write '{target}': the file may be open in PowerPoint. Close it and re-run."
-            )
-        else:
-            _print_error(f"Permission denied: {exc}")
-        if debug:
-            traceback.print_exc()
-        return 1
-    except PackageNotFoundError as exc:
-        _print_error(
-            f"Not a valid pptx file: {exc}. The file may be corrupt, empty, "
-            "or in a format python-pptx can't read."
-        )
-        if debug:
-            traceback.print_exc()
-        return 1
-    except yaml.YAMLError as exc:
-        _print_error(f"Invalid YAML: {exc}")
-        if debug:
-            traceback.print_exc()
-        return 1
-    except FileNotFoundError as exc:
-        _print_error(str(exc))
-        if debug:
-            traceback.print_exc()
-        return 1
-    except (ValueError, NotADirectoryError) as exc:
-        _print_error(str(exc))
-        if debug:
-            traceback.print_exc()
-        return 1
-    except Exception as exc:
-        # Last-resort CLI guard: ruff BLE001 is suppressed via per-file-ignore
-        # in pyproject.toml because a human-facing CLI should never present a
-        # raw Python traceback on an unexpected exception class.
+    except BaseException as exc:
+        for exc_type, formatter, exit_code in _ERROR_HANDLERS:
+            if isinstance(exc, exc_type):
+                _print_error(formatter(exc))
+                if debug:
+                    traceback.print_exc()
+                return exit_code
+        # Unclassified: last-resort guard so a human-facing CLI never shows
+        # a raw Python traceback on an unexpected exception class.
         _print_error(f"Unexpected {type(exc).__name__}: {exc}")
         if debug:
             traceback.print_exc()

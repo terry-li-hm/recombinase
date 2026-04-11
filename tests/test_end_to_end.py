@@ -91,9 +91,13 @@ key_skills:
 def _build_sample_config(
     template_path: Path, config_path: Path, output_slide_cleared: bool
 ) -> None:
+    # overflow_ratio: 0 disables the v0.1.6 overflow heuristic so these
+    # legacy tests keep their strict `warnings == []` assertions. The
+    # overflow behavior itself is covered by test_regressions.py.
     config_yaml = f"""template: {template_path}
 source_slide_index: 1
 clear_source_slide: {str(output_slide_cleared).lower()}
+overflow_ratio: 0
 placeholders:
   name: Consultant_Name
   role: Role_Title

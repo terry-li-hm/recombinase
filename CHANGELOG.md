@@ -5,6 +5,64 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-04-11
+
+### Added
+
+- **Overflow detection heuristic in `generate_deck`.** For each populated
+  field, recombinase now compares the new text length against the source
+  slide's baseline and emits a warning when the ratio exceeds
+  `overflow_ratio` (default `1.5`). Set `overflow_ratio: 0` in the config
+  to disable. Caught by `--strict` to escalate to exit code 2.
+- **Preset geometry detection in `inspect`.** Each `ShapeInfo` now carries
+  a `preset_geom` field recording `<a:prstGeom prst="...">` values
+  (`ellipse`, `roundRect`, `rect`, etc.). Surfaced in `format_template_info`
+  output as `geom=ellipse` so circle-cropped profile pictures are
+  discoverable without opening PowerPoint. The underlying bitmap is still
+  a square — the preset is a display mask only.
+- **`tests/conftest.py` with shared pytest fixtures**:
+  `simple_template`, `rich_template`, `template_with_picture`,
+  `template_with_group`, `tiny_png`, `sample_data_dir`, `write_config`.
+  Reduces duplication across test files and makes future tests cheaper
+  to write.
+- **Regression test for the `r:id` rewrite branch in `duplicate_slide`**:
+  verifies the rewrite actually fires via a round-trip save/reopen with
+  `Picture.image.blob` access.
+
+### Changed
+
+- **`main()` exception handler refactored to a dispatch table**
+  (`_ERROR_HANDLERS`). Six nearly-identical `except` blocks collapsed
+  into one loop plus a data structure. Adding a new trapped exception
+  class is now a one-line addition instead of a four-line block.
+- **`_format_permission_error` and `_format_package_not_found`** take
+  `BaseException` instead of specific subclasses, which satisfies the
+  contravariant `Callable[[BaseException], str]` type the dispatch
+  table expects.
+
+### Fixed
+
+- **Test fixture duplication surfaced by the v0.1.5 re-review**: new tests
+  in `test_v0_1_6_features.py` use conftest fixtures directly.
+  `test_end_to_end.py` and `test_regressions.py` still use their legacy
+  inline helpers and will migrate in a future release — this was a
+  deliberate scope choice to keep the v0.1.6 ship small.
+
+### Deferred to v0.2
+
+The v0.1.5 re-review surfaced several remaining items that are not
+addressed in this release:
+
+- CLI `inspect` / `init` / `new` runner smoke tests
+- `generate_deck` with `records=[]` at the library layer
+- `RECOMBINASE_DEBUG` env var documentation in README
+- `cmd_init` default output path matching the scaffolded layout
+- `_default_project_dir` missing `OneDriveConsumer`
+- Nested group shape recursion test
+- External hyperlink rel duplication test
+- `notesSlide` skip test
+- `test_regressions.py` split into focused files
+
 ## [0.1.5] - 2026-04-11
 
 ### Fixed

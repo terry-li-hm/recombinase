@@ -14,6 +14,7 @@ from typing import Any
 
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.oxml.ns import qn
 
 
 @dataclass
@@ -30,6 +31,14 @@ class ShapeInfo:
     run_count: int | None
     depth: int = 0
     """Nesting depth inside group shapes. 0 = top-level, 1 = inside a group, etc."""
+
+    preset_geom: str | None = None
+    """The `<a:prstGeom prst="...">` value if the shape uses a preset geometry
+    (`ellipse`, `roundRect`, `rect`, etc.). `None` if the shape has no preset
+    geometry or uses a custom geometry. Useful for detecting circle-cropped
+    profile pictures — if a Picture shape has `preset_geom="ellipse"` the
+    underlying image bitmap is still a square, it's just being rendered with
+    a circle mask."""
 
 
 @dataclass
@@ -49,6 +58,23 @@ class TemplateInfo:
     slide_count: int
     slides: list[SlideInfo]
     layout_names: list[str]
+
+
+def _detect_preset_geom(shape: Any) -> str | None:
+    """Return the value of `<a:prstGeom prst="...">` for this shape, or None.
+
+    Walks the shape's XML element looking for the first `prstGeom` descendant.
+    Returns the preset name string (e.g. `"ellipse"`, `"roundRect"`, `"rect"`).
+    Used by the inspector to flag circle-cropped profile pictures so users
+    can see at a glance which shapes apply a mask to the underlying bitmap.
+    """
+    element = getattr(shape, "_element", None)
+    if element is None:
+        return None
+    prst_geom = element.find(f".//{qn('a:prstGeom')}")
+    if prst_geom is None:
+        return None
+    return prst_geom.get("prst")
 
 
 def _shape_info(shape: Any, depth: int = 0) -> ShapeInfo:
@@ -78,6 +104,7 @@ def _shape_info(shape: Any, depth: int = 0) -> ShapeInfo:
         paragraph_count=paragraph_count,
         run_count=run_count,
         depth=depth,
+        preset_geom=_detect_preset_geom(shape),
     )
 
 
@@ -142,6 +169,8 @@ def format_template_info(info: TemplateInfo) -> str:
             if shape.text_chars is not None:
                 bits.append(f"text_chars={shape.text_chars}")
                 bits.append(f"paras={shape.paragraph_count}, runs={shape.run_count}")
+            if shape.preset_geom is not None:
+                bits.append(f"geom={shape.preset_geom}")
             if shape.depth > 0:
                 bits.append(f"depth={shape.depth}")
             lines.append(indent + "- " + " | ".join(bits))
