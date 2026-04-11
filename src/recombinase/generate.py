@@ -32,6 +32,11 @@ def load_records(data_dir: Path | str) -> list[dict[str, Any]]:
 
     Each .yaml or .yml file becomes one record. Files are loaded in
     sorted filename order so output is deterministic.
+
+    Each loaded record has `_recombinase_record_dir` stamped with the
+    absolute path to its containing directory, so downstream code (in
+    particular `set_picture`) can resolve relative image paths against the
+    YAML file's directory rather than against the caller's CWD.
     """
     data_dir = Path(data_dir).expanduser().resolve()
     if not data_dir.exists():
@@ -48,6 +53,9 @@ def load_records(data_dir: Path | str) -> list[dict[str, Any]]:
             continue
         if not isinstance(data, dict):
             raise ValueError(f"{yaml_file}: expected top-level mapping, got {type(data).__name__}")
+        # Stamp the record's source directory so set_picture can resolve
+        # relative image paths against the YAML file's own directory.
+        data.setdefault("_recombinase_record_dir", str(yaml_file.parent))
         records.append(data)
     return records
 
@@ -293,8 +301,14 @@ def populate_table(shape: Any, table_config: TableConfig, rows: list[Any]) -> li
     Returns a list of warning strings (empty if everything populated cleanly).
     Common warnings:
     - data has more rows than the template table can hold (truncation)
-    - a row dict is missing a column key (that cell is left blank)
+    - data has fewer rows than the template's data rows (excess rows cleared)
+    - a row dict is missing a column key (that cell is cleared + warned)
     - the shape isn't actually a table (recombinase is called on the wrong shape)
+
+    Stale-data invariant: because the duplicate-and-populate pattern brings
+    the source slide's example text forward, any cell we don't explicitly
+    overwrite would leak example content into the output. `populate_table`
+    therefore clears every data cell that is not replaced with a real value.
     """
     warnings: list[str] = []
 
@@ -318,6 +332,12 @@ def populate_table(shape: Any, table_config: TableConfig, rows: list[Any]) -> li
 
     for row_index, row_dict in enumerate(rows[: len(data_rows)]):
         target_row = data_rows[row_index]
+        is_dict = isinstance(row_dict, dict)
+        if not is_dict:
+            warnings.append(
+                f"table {shape.name!r} row {row_index}: expected a "
+                f"dict, got {type(row_dict).__name__}; clearing row"
+            )
         for col_index, column_name in enumerate(table_config.columns):
             if col_index >= len(target_row.cells):
                 warnings.append(
@@ -327,17 +347,25 @@ def populate_table(shape: Any, table_config: TableConfig, rows: list[Any]) -> li
                 )
                 continue
             cell = target_row.cells[col_index]
-            if not isinstance(row_dict, dict):
+            if not is_dict:
+                _clear_cell(cell)
+                continue
+            if column_name not in row_dict:
                 warnings.append(
-                    f"table {shape.name!r} row {row_index}: expected a "
-                    f"dict, got {type(row_dict).__name__}; skipping row"
+                    f"table {shape.name!r} row {row_index}: missing column "
+                    f"{column_name!r}; cell cleared"
                 )
-                break
-            value = row_dict.get(column_name)
-            if value is None:
+                _clear_cell(cell)
+                continue
+            value = row_dict[column_name]
+            if value is None or value == "":
+                _clear_cell(cell)
                 continue
             if isinstance(value, list):
                 items = [str(item) for item in value if item is not None and item != ""]
+                if not items:
+                    _clear_cell(cell)
+                    continue
                 text = table_config.list_joiner.join(items)
             else:
                 text = str(value)
@@ -347,8 +375,37 @@ def populate_table(shape: Any, table_config: TableConfig, rows: list[Any]) -> li
                 _write_paragraphs(cell.text_frame, text.split("\n"))
             else:
                 cell.text_frame.text = text
+        # Clear any trailing cells on this row that aren't covered by columns —
+        # templates sometimes have more physical cells than configured columns,
+        # and leaving them with example text would leak.
+        for extra_col_index in range(len(table_config.columns), len(target_row.cells)):
+            _clear_cell(target_row.cells[extra_col_index])
+
+    # Clear every excess data row the record didn't cover. Without this, a
+    # record with fewer entries than the template's capacity leaks the
+    # duplicated example rows into the output.
+    excess_row_count = len(data_rows) - len(rows)
+    if excess_row_count > 0:
+        warnings.append(
+            f"table {shape.name!r} has {len(data_rows)} data rows but only "
+            f"{len(rows)} record(s) provided; clearing {excess_row_count} "
+            "unused row(s)"
+        )
+        for target_row in data_rows[len(rows) :]:
+            for cell in target_row.cells:
+                _clear_cell(cell)
 
     return warnings
+
+
+def _clear_cell(cell: Any) -> None:
+    """Clear all text from a table cell while keeping the cell in place.
+
+    python-pptx does not expose a cell.clear(); assigning an empty string to
+    `cell.text_frame.text` collapses the cell to a single empty paragraph,
+    which is the closest analogue and preserves column width / row height.
+    """
+    cell.text_frame.text = ""
 
 
 def remove_slide(presentation: Any, slide: Slide) -> None:
@@ -524,9 +581,7 @@ def generate_deck(
                     f"{table_config.shape!r} ({table_field_name!r}): {exc}"
                 )
                 continue
-            warnings.extend(
-                f"record {record_id!r}: {tw}" for tw in table_warnings
-            )
+            warnings.extend(f"record {record_id!r}: {tw}" for tw in table_warnings)
 
         generated_count += 1
 

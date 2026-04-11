@@ -355,7 +355,9 @@ def cmd_validate(
     info = inspect_template(cfg.template)
 
     template_shape_names = set(shape_names_from_slide(info, cfg.source_slide_index))
-    config_shape_names = set(cfg.placeholders.values())
+    placeholder_shape_names = set(cfg.placeholders.values())
+    table_shape_names = {table.shape for table in cfg.tables.values()}
+    config_shape_names = placeholder_shape_names | table_shape_names
 
     missing_shapes = config_shape_names - template_shape_names
     unused_shapes = template_shape_names - config_shape_names
@@ -370,16 +372,25 @@ def cmd_validate(
     if missing_shapes:
         typer.secho(
             f"\nMissing shapes ({len(missing_shapes)}): configured in the "
-            "placeholders map but NOT found on the template's source slide.",
+            "placeholders or tables map but NOT found on the template's source slide.",
             fg=typer.colors.RED,
             err=True,
         )
         for shape_name in sorted(missing_shapes):
-            field_names = [
+            placeholder_fields = [
                 field for field, shape in cfg.placeholders.items() if shape == shape_name
             ]
+            table_fields = [
+                field for field, table in cfg.tables.items() if table.shape == shape_name
+            ]
+            provenance_bits: list[str] = []
+            if placeholder_fields:
+                provenance_bits.append(f"placeholder field: {', '.join(placeholder_fields)}")
+            if table_fields:
+                provenance_bits.append(f"table field: {', '.join(table_fields)}")
+            provenance = "; ".join(provenance_bits) if provenance_bits else "unknown source"
             typer.secho(
-                f"  - '{shape_name}' (mapped from field: {', '.join(field_names)})",
+                f"  - '{shape_name}' ({provenance})",
                 fg=typer.colors.RED,
                 err=True,
             )
@@ -548,14 +559,14 @@ def cmd_generate(
             fg=typer.colors.CYAN,
         )
         # Pipe through a tmp path so generate_deck's save doesn't touch the
-        # real output; caller still gets the same warning list.
+        # real output; caller still gets the same warning list. Use a context
+        # manager so the temp directory is cleaned up even if generate_deck
+        # raises mid-run.
         import tempfile
 
-        tmp_output = Path(tempfile.mkdtemp()) / "dry-run.pptx"
-        result = generate_deck(cfg, records, tmp_output)
-        if tmp_output.exists():
-            tmp_output.unlink()
-        tmp_output.parent.rmdir()
+        with tempfile.TemporaryDirectory() as tmp_root:
+            tmp_output = Path(tmp_root) / "dry-run.pptx"
+            result = generate_deck(cfg, records, tmp_output)
 
         typer.secho(
             f"DRY RUN complete. Would have written: '{output}'",

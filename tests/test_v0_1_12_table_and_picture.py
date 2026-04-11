@@ -129,7 +129,10 @@ def test_populate_table_joins_list_values_with_newlines(tmp_path: Path) -> None:
     ]
 
     warnings = populate_table(shape, config, rows)
-    assert warnings == []
+    # One record against a 2-data-row template: expect a single
+    # "clearing unused row(s)" warning for the untouched row.
+    assert len(warnings) == 1
+    assert "clearing 1 unused row" in warnings[0]
 
     table = shape.table
     cell_text = table.cell(1, 2).text
@@ -138,6 +141,10 @@ def test_populate_table_joins_list_values_with_newlines(tmp_path: Path) -> None:
     assert "Trained 20 reviewers" in cell_text
     # Three lines separated by newlines
     assert cell_text.count("\n") == 2
+    # Excess row 2 was cleared, not left with example text
+    assert table.cell(2, 0).text == ""
+    assert table.cell(2, 1).text == ""
+    assert table.cell(2, 2).text == ""
 
 
 def test_populate_table_truncates_when_rows_exceed_capacity(tmp_path: Path) -> None:
@@ -189,11 +196,18 @@ def test_populate_table_no_header_row_writes_into_row_0(tmp_path: Path) -> None:
     ]
 
     warnings = populate_table(shape, config, rows)
-    assert warnings == []
+    # header_row=False means all 3 rows are data rows. One record leaves 2
+    # excess rows, which are now cleared and surfaced as a warning.
+    assert len(warnings) == 1
+    assert "clearing 2 unused row" in warnings[0]
 
     table = shape.table
     # Row 0 overwritten (header treated as data)
     assert table.cell(0, 0).text == "New Client"
+    # Excess rows 1 + 2 cleared — no example text leakage
+    assert table.cell(1, 0).text == ""
+    assert table.cell(1, 1).text == ""
+    assert table.cell(2, 0).text == ""
 
 
 def test_populate_table_warns_on_non_table_shape(tmp_path: Path) -> None:
