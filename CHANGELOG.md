@@ -5,6 +5,41 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-04-11
+
+### Added
+
+- **14 new robustness tests** (94 → 108) closing the remaining coverage
+  gaps flagged by the v0.1.5 testing reviewer re-review:
+  - `load_records` error branches: missing dir (`FileNotFoundError`),
+    path-is-file (`NotADirectoryError`), non-dict YAML record
+    (`ValueError`), silent-skip for empty/comment-only YAML files,
+    and `.yml` extension globbing.
+  - `remove_slide` direct test with slide-count and relationship-drop
+    verification. Previously only covered indirectly.
+  - `duplicate_slide` external-hyperlink rel preservation — rounds a real
+    hyperlink through save/reopen and asserts the external rel survives.
+  - `duplicate_slide` `notesSlide` skip — verifies source-slide presenter
+    notes do NOT carry over to the duplicated slide.
+  - `_walk_shapes` nested group recursion — group-inside-a-group template
+    fixture, asserts every level is reachable.
+  - `set_shape_value` with `bool` values (`True` → `"True"`, `False` →
+    `"False"` — pin the bool-is-int-subclass gotcha).
+  - `load_config` relative template path resolution against config dir.
+  - `main()` `PermissionError` branch with the PowerPoint-lock hint —
+    monkeypatches `Presentation.save` to force the error path.
+  - `main()` `yaml.YAMLError` branch with clean error output.
+
+### Why these and not the others
+
+The testing reviewer's remaining-gap list also flagged Unicode field
+values, `RECOMBINASE_DEBUG` env var, non-string placeholder type guards,
+and `test_regressions.py` file splitting. Those are P2/P3 — they catch
+edge cases that may never fire. The 14 above catch code paths that WILL
+fire on a real CV template with a hyperlink, or a typo'd data directory,
+or presenter notes, or a PowerPoint lock. Shipping the high-signal tests
+and deferring the rest.
+
 ## [0.1.8] - 2026-04-11
 
 ### Added
