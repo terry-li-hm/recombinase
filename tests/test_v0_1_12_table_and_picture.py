@@ -1046,3 +1046,142 @@ def test_write_multirun_br_handles_unequal_parts_gracefully() -> None:
     assert len(runs2_xml) == 2
     assert runs2_xml[0].find(qn("a:t")).text == "Primary"
     assert runs2_xml[1].find(qn("a:t")).text == "Secondary Tertiary"
+
+
+# -- _write_paragraphs list cloning into multi-run-br (v0.1.17) ------------
+
+
+def test_set_shape_value_clones_multirun_br_template_for_list_items() -> None:
+    """When the source shape's first paragraph is multi-run-br (bold run +
+    <a:br/> + italic run) and the caller writes a LIST of items containing
+    '\\n', every emitted bullet paragraph should clone the source
+    prototype — preserving per-run rPr and the soft break per item. This
+    is the CV background idiom:
+
+        - Bold Role, Firm
+          (italic N years)
+        - Bold Role, Firm 2
+          (italic N years 2)
+
+    Each bullet is a multi-run-br paragraph, not a plain single-run line.
+    """
+    from pptx.oxml.ns import qn
+
+    from recombinase.generate import set_shape_value
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    txbox = slide.shapes.add_textbox(
+        left=Inches(0.5), top=Inches(0.5), width=Inches(8), height=Inches(3)
+    )
+    txbox.name = "background"
+    _build_cell_with_multirun_br(txbox)  # seeds 1 para: bold <a:br/> italic
+
+    items = [
+        "AGM, China CITIC Bank International\n(3 years, 2022 - 2026)",
+        "VP, DBS Hong Kong\n(4 years, 2018 - 2022)",
+        "Manager, PwC Hong Kong\n(4.5 years, 2013 - 2018)",
+    ]
+    set_shape_value(txbox, items)
+
+    # Should end up with 3 paragraphs, each with 2 runs + 1 <a:br/>
+    txBody = txbox.text_frame._txBody
+    paragraphs = txBody.findall(qn("a:p"))
+    assert len(paragraphs) == 3, f"expected 3 cloned paragraphs, got {len(paragraphs)}"
+
+    expected_primary = [
+        "AGM, China CITIC Bank International",
+        "VP, DBS Hong Kong",
+        "Manager, PwC Hong Kong",
+    ]
+    expected_secondary = [
+        "(3 years, 2022 - 2026)",
+        "(4 years, 2018 - 2022)",
+        "(4.5 years, 2013 - 2018)",
+    ]
+
+    for p_el, primary, secondary in zip(
+        paragraphs, expected_primary, expected_secondary, strict=True
+    ):
+        runs = p_el.findall(qn("a:r"))
+        brs = p_el.findall(qn("a:br"))
+        assert len(runs) == 2, f"expected 2 runs, got {len(runs)}"
+        assert len(brs) == 1, f"expected 1 <a:br/>, got {len(brs)}"
+        assert runs[0].find(qn("a:t")).text == primary
+        assert runs[0].find(qn("a:rPr")).get("b") == "1", f"primary run lost bold on {primary!r}"
+        assert runs[1].find(qn("a:t")).text == secondary
+        assert runs[1].find(qn("a:rPr")).get("i") == "1", (
+            f"secondary run lost italic on {secondary!r}"
+        )
+
+
+def test_set_shape_value_clones_multirun_br_with_single_line_item() -> None:
+    """A list item WITHOUT '\\n' against a multi-run-br prototype renders
+    as a flat single-line paragraph: run 0 gets the text, run 1 is empty,
+    and the <a:br/> is stripped so there's no dangling soft break."""
+    from pptx.oxml.ns import qn
+
+    from recombinase.generate import set_shape_value
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    txbox = slide.shapes.add_textbox(
+        left=Inches(0.5), top=Inches(0.5), width=Inches(8), height=Inches(3)
+    )
+    _build_cell_with_multirun_br(txbox)
+
+    set_shape_value(
+        txbox,
+        [
+            "First line only",  # no \n → flat
+            "Second with break\n(year)",  # has \n → two runs
+        ],
+    )
+
+    txBody = txbox.text_frame._txBody
+    paragraphs = txBody.findall(qn("a:p"))
+    assert len(paragraphs) == 2
+
+    # Flat item: 2 runs but run 1 empty, no br
+    runs0 = paragraphs[0].findall(qn("a:r"))
+    brs0 = paragraphs[0].findall(qn("a:br"))
+    assert runs0[0].find(qn("a:t")).text == "First line only"
+    assert runs0[1].find(qn("a:t")).text == ""
+    assert len(brs0) == 0, "single-line item must strip the <a:br/>"
+
+    # Multi-run item: 2 runs + 1 br
+    runs1 = paragraphs[1].findall(qn("a:r"))
+    brs1 = paragraphs[1].findall(qn("a:br"))
+    assert runs1[0].find(qn("a:t")).text == "Second with break"
+    assert runs1[1].find(qn("a:t")).text == "(year)"
+    assert len(brs1) == 1
+
+
+def test_write_paragraphs_list_without_newlines_uses_classic_path() -> None:
+    """List of plain single-line items against a multi-run-br prototype
+    should still fall through the classic single-run-per-paragraph path
+    (no cloning) because the multirun-br routing only fires when at
+    least one item has '\\n'. Sanity check that plain bullet lists still
+    work against any template shape."""
+    from pptx.oxml.ns import qn
+
+    from recombinase.generate import set_shape_value
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    txbox = slide.shapes.add_textbox(
+        left=Inches(0.5), top=Inches(0.5), width=Inches(8), height=Inches(3)
+    )
+    _build_cell_with_multirun_br(txbox)
+
+    set_shape_value(txbox, ["Alpha", "Beta", "Gamma"])
+
+    txBody = txbox.text_frame._txBody
+    paragraphs = txBody.findall(qn("a:p"))
+    assert len(paragraphs) == 3
+    # Classic path — each paragraph has a single run with no br
+    for p_el, expected in zip(paragraphs, ["Alpha", "Beta", "Gamma"], strict=True):
+        runs = p_el.findall(qn("a:r"))
+        assert len(runs) == 1, f"classic path should emit 1 run, got {len(runs)}"
+        assert runs[0].find(qn("a:t")).text == expected
+        assert p_el.findall(qn("a:br")) == []

@@ -210,6 +210,7 @@ def _write_paragraphs(text_frame: Any, items: list[str]) -> None:
     # clear() wipes them. These encode the template's bullet/indent/font style.
     first_pPr_copy = None
     first_rPr_copy = None
+    source_multirun_template: Any = None
     existing_paras = text_frame.paragraphs
     if existing_paras:
         first_p_xml = existing_paras[0]._p
@@ -222,6 +223,25 @@ def _write_paragraphs(text_frame: Any, items: list[str]) -> None:
             first_rPr = first_r.find(qn("a:rPr"))
             if first_rPr is not None:
                 first_rPr_copy = deepcopy(first_rPr)
+        # If the source paragraph itself is multi-run-br (run + <a:br/> + run
+        # with distinct rPrs), capture the whole <a:p> as a prototype so we
+        # can clone it per item and preserve per-run formatting when items
+        # contain '\n'. Unblocks the CV "background" list idiom:
+        #   • Bold Role, Firm
+        #     (italic N years)
+        # where each bullet is a multi-run-br paragraph, not a plain run.
+        source_runs = first_p_xml.findall(qn("a:r"))
+        source_brs = first_p_xml.findall(qn("a:br"))
+        if len(source_runs) >= 2 and len(source_brs) >= 1:
+            source_multirun_template = deepcopy(first_p_xml)
+
+    # Route: if any item contains '\n' AND the source is a multi-run-br
+    # paragraph template, clone the template per item (preserving per-run
+    # rPr + br) and inject split parts into each run. Otherwise fall back
+    # to the classic single-run-per-paragraph path.
+    if source_multirun_template is not None and any("\n" in item for item in items):
+        _write_paragraphs_cloning_multirun_br(text_frame, items, source_multirun_template)
+        return
 
     text_frame.clear()
 
@@ -234,6 +254,86 @@ def _write_paragraphs(text_frame: Any, items: list[str]) -> None:
         new_p = text_frame.add_paragraph()
         new_p.text = item
         _apply_preserved_format(new_p, first_pPr_copy, first_rPr_copy)
+
+
+def _write_paragraphs_cloning_multirun_br(
+    text_frame: Any, items: list[str], source_p_template: Any
+) -> None:
+    """Emit one paragraph per item by deep-cloning a multi-run-br prototype.
+
+    Used when the template's first paragraph is a multi-run-br idiom
+    (e.g. bold `Role, Firm` + `<a:br/>` + italic `(N years)`) and the
+    caller wants every list item rendered with the same structure.
+    Unlike `_write_paragraphs`, which creates fresh paragraphs and
+    reapplies a single rPr profile to the whole line, this function
+    clones the source paragraph XML (pPr, runs, brs, per-run rPr) and
+    only overwrites the `<a:t>` text content of each run.
+
+    Per-item rules:
+    - If item contains '\\n': split into parts, walk cloned runs in
+      order, replace each `<a:t>` text with the corresponding part.
+      Padding / merging follows the same rules as `_write_multirun_br`.
+    - If item has no '\\n': replace the first run's `<a:t>` with the
+      full item text, clear trailing runs' `<a:t>`, and strip `<a:br/>`
+      children so the cloned paragraph collapses to a single line.
+    """
+    from pptx.oxml.ns import qn
+
+    # Locate the text body via the existing first paragraph so we don't
+    # have to poke at TextFrame's private `_txBody` handle directly.
+    if not text_frame.paragraphs:
+        return
+    first_p_xml = text_frame.paragraphs[0]._p
+    txBody = first_p_xml.getparent()
+    if txBody is None:
+        return
+
+    # Drop every existing paragraph before appending clones — the
+    # template prototype was captured before this wipe, so it's safe.
+    for existing_p in txBody.findall(qn("a:p")):
+        txBody.remove(existing_p)
+
+    for item in items:
+        cloned_p = deepcopy(source_p_template)
+        cloned_runs = cloned_p.findall(qn("a:r"))
+        if not cloned_runs:
+            txBody.append(cloned_p)
+            continue
+
+        if "\n" in item:
+            parts = item.split("\n")
+            if len(parts) < len(cloned_runs):
+                aligned: list[str] = list(parts) + [""] * (len(cloned_runs) - len(parts))
+            elif len(parts) > len(cloned_runs):
+                aligned = list(parts[: len(cloned_runs) - 1])
+                aligned.append(" ".join(parts[len(cloned_runs) - 1 :]))
+            else:
+                aligned = list(parts)
+            for run_el, part in zip(cloned_runs, aligned, strict=True):
+                t_el = run_el.find(qn("a:t"))
+                if t_el is None:
+                    from lxml import etree
+
+                    t_el = etree.SubElement(run_el, qn("a:t"))
+                t_el.text = part
+        else:
+            # Single-line item: run 0 gets the full text, the rest are
+            # cleared + `<a:br/>` children removed so the paragraph reads
+            # as a single flat line (no dangling soft break).
+            first_t = cloned_runs[0].find(qn("a:t"))
+            if first_t is None:
+                from lxml import etree
+
+                first_t = etree.SubElement(cloned_runs[0], qn("a:t"))
+            first_t.text = item
+            for extra_run in cloned_runs[1:]:
+                extra_t = extra_run.find(qn("a:t"))
+                if extra_t is not None:
+                    extra_t.text = ""
+            for br_el in cloned_p.findall(qn("a:br")):
+                cloned_p.remove(br_el)
+
+        txBody.append(cloned_p)
 
 
 def _apply_preserved_format(paragraph: Any, pPr_copy: Any, rPr_copy: Any) -> None:

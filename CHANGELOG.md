@@ -5,6 +5,44 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.17] - 2026-04-12
+
+### Added
+
+- **List shapes with multi-run-br bullets.** `_write_paragraphs` now
+  detects when the source shape's first paragraph is itself a
+  multi-run-br idiom (≥2 `<a:r>` runs + ≥1 `<a:br/>`, each run with
+  distinct rPr) and, when any list item contains `\n`, clones that
+  paragraph as a prototype per item — preserving per-run rPr and the
+  soft break across every emitted bullet. Unblocks the CV "background"
+  list where each bullet renders as:
+
+      • Bold Role, Firm
+        (italic N years)
+
+  Previously `_write_paragraphs` always emitted each item as a single
+  flat run, losing the template's bold/italic/soft-break structure.
+  YAML input stays natural — block literal with `|-` per item:
+
+  ```yaml
+  background:
+    - |-
+      AGM, China CITIC Bank International
+      (3 years, 2022 - 2026)
+    - |-
+      VP, DBS Hong Kong
+      (4 years, 2018 - 2022)
+  ```
+
+  Per-item fallback: single-line items (no `\n`) against a multi-run-br
+  prototype render as a flat line — run 0 gets the text, trailing runs
+  are cleared, and the `<a:br/>` is stripped so there's no dangling
+  soft break. Plain bullet lists against non-multirun shapes continue
+  to use the classic single-run-per-paragraph path unchanged.
+- 3 new regression tests: three-item list cloning with bold+italic
+  preservation per bullet, single-line item fallback with br stripped,
+  and plain list sanity check (classic path still works). 164 → 167.
+
 ## [0.1.16] - 2026-04-12
 
 ### Changed
