@@ -11,6 +11,33 @@ import yaml
 
 
 @dataclass
+class TableConfig:
+    """Configuration for populating a table shape from a list of record rows.
+
+    One `TableConfig` per table shape in the template. The record's data
+    for this table is expected to be a list of dicts, one dict per row,
+    with keys matching the `columns` list. Each column value can be a
+    scalar (written as single-line cell text) or a list (joined with
+    `list_joiner` — defaults to newline — for bullet-style cells).
+    """
+
+    shape: str
+    """The `.Name` of the table shape on the source slide."""
+
+    columns: list[str] = field(default_factory=list)
+    """Ordered list of data field names, one per table column."""
+
+    header_row: bool = True
+    """If True, row 0 of the table is treated as a static header and
+    skipped during population. Data rows start at row 1."""
+
+    list_joiner: str = "\n"
+    """String used to join list values into cell text. Default is newline,
+    which renders as multiple bullets per cell when the template cell has
+    paragraph-level bullet formatting."""
+
+
+@dataclass
 class TemplateConfig:
     """Per-template configuration declaring shape name <-> data field mapping.
 
@@ -34,7 +61,15 @@ class TemplateConfig:
           name: Consultant_Name
           role: Role_Title
           background: Background_Bullets
+
+    Picture placeholders work automatically — if the shape on the template
+    is a PicturePlaceholder and the data value is a file path, recombinase
+    calls `shape.insert_picture(path)` instead of setting text.
     """
+
+    tables: dict[str, TableConfig] = field(default_factory=dict)
+    """Mapping from data field name to a `TableConfig`. Used when a record's
+    data for a field is a list of dicts and the target shape is a table."""
 
     clear_source_slide: bool = True
     """If True, the source (example) slide is removed from the final output
@@ -52,8 +87,11 @@ class TemplateConfig:
             errors.append(f"Template file not found: {self.template}")
         if self.source_slide_index < 1:
             errors.append(f"source_slide_index must be >= 1 (got {self.source_slide_index})")
-        if not self.placeholders:
-            errors.append("placeholders mapping is empty — at least one field is required")
+        if not self.placeholders and not self.tables:
+            errors.append(
+                "config has no placeholders and no tables — at least one of "
+                "them must be populated, otherwise recombinase has nothing to do"
+            )
         return errors
 
 
@@ -126,10 +164,45 @@ def load_config(path: Path | str) -> TemplateConfig:
     if overflow_ratio_raw < 0:
         raise ValueError(f"{path}: 'overflow_ratio' must be >= 0 (got {overflow_ratio_raw})")
 
+    tables_raw = data.get("tables") or {}
+    if not isinstance(tables_raw, dict):
+        raise ValueError(f"{path}: 'tables' must be a mapping, got {type(tables_raw).__name__}")
+    tables: dict[str, TableConfig] = {}
+    for field_name, table_data in tables_raw.items():
+        if not isinstance(field_name, str):
+            raise ValueError(
+                f"{path}: 'tables' keys must be strings, got {type(field_name).__name__}"
+            )
+        if not isinstance(table_data, dict):
+            raise ValueError(
+                f"{path}: 'tables.{field_name}' must be a mapping, got {type(table_data).__name__}"
+            )
+        shape_name_raw = table_data.get("shape")
+        if not isinstance(shape_name_raw, str):
+            raise ValueError(f"{path}: 'tables.{field_name}.shape' must be a string")
+        columns_raw = table_data.get("columns") or []
+        if not isinstance(columns_raw, list) or not all(
+            isinstance(col, str) for col in columns_raw
+        ):
+            raise ValueError(f"{path}: 'tables.{field_name}.columns' must be a list of strings")
+        header_row_raw = table_data.get("header_row", True)
+        if not isinstance(header_row_raw, bool):
+            raise ValueError(f"{path}: 'tables.{field_name}.header_row' must be a boolean")
+        list_joiner_raw = table_data.get("list_joiner", "\n")
+        if not isinstance(list_joiner_raw, str):
+            raise ValueError(f"{path}: 'tables.{field_name}.list_joiner' must be a string")
+        tables[field_name] = TableConfig(
+            shape=shape_name_raw,
+            columns=list(columns_raw),
+            header_row=header_row_raw,
+            list_joiner=list_joiner_raw,
+        )
+
     config = TemplateConfig(
         template=template_path,
         source_slide_index=source_slide_index_raw,
         placeholders=dict(placeholders_raw),
+        tables=tables,
         clear_source_slide=clear_source_slide_raw,
         overflow_ratio=float(overflow_ratio_raw),
     )

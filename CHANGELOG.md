@@ -5,6 +5,52 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12] - 2026-04-11
+
+### Added
+
+- **Table cell population.** New `tables:` section in the template config
+  maps table field names to a `TableConfig` (shape name, ordered column
+  list, header_row flag, list_joiner string). `generate_deck` walks each
+  configured table after the placeholders loop, reads the record's list
+  of dicts, and populates rows cell-by-cell. Header row 0 is skipped by
+  default. List values within a cell are joined with `list_joiner`
+  (default newline) so bullet-style cells inherit the template's
+  paragraph-level formatting via `_write_paragraphs`. Warnings fire on
+  over-capacity (more rows than template), missing columns, and
+  non-dict row data.
+- **Picture placeholder insertion.** `generate_deck` now routes shapes to
+  `set_picture` when they are `PicturePlaceholder` instances instead of
+  setting their text frame. `set_picture` accepts a file path (relative
+  paths resolve against an optional `base_dir`), calls
+  `shape.insert_picture(path)`, and silently no-ops on empty/None values
+  so the template's example headshot stays in place when a record omits
+  the field. Missing files raise `FileNotFoundError` which flows into
+  `generate_deck`'s per-record warning collector.
+- 15 new regression tests covering: table population with header skip,
+  list-joiner cell rendering, over-capacity truncation warning,
+  header-row=false write into row 0, non-table-shape warning, picture
+  placeholder detection, picture insertion round-trip, missing-file
+  error, relative-path resolution against base_dir, empty-value no-op,
+  end-to-end table population via generate_deck, table record type
+  validation, config parsing for tables section, malformed tables
+  rejection. 116 → 131 tests.
+
+### Changed
+
+- `TemplateConfig.validate()` now accepts a config with populated
+  `tables:` and empty `placeholders:` (previously required at least one
+  placeholder). At least one of the two must be non-empty — a config
+  with both empty still fails validation with a clearer message.
+- Added `TableConfig` dataclass to the `recombinase.config` module.
+
+### Closes
+
+- The two remaining Capco template feature gaps (`recent_projects` table
+  and `photo` picture placeholder) now work without manual
+  post-processing. A Capco CV run can populate every template field in
+  one `recombinase generate` command.
+
 ## [0.1.11] - 2026-04-11
 
 ### Added
