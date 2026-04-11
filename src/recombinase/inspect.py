@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 
 @dataclass
@@ -26,6 +28,8 @@ class ShapeInfo:
     text_chars: int | None
     paragraph_count: int | None
     run_count: int | None
+    depth: int = 0
+    """Nesting depth inside group shapes. 0 = top-level, 1 = inside a group, etc."""
 
 
 @dataclass
@@ -47,6 +51,51 @@ class TemplateInfo:
     layout_names: list[str]
 
 
+def _shape_info(shape: Any, depth: int = 0) -> ShapeInfo:
+    placeholder_type: str | None = None
+    placeholder_idx: int | None = None
+    if getattr(shape, "is_placeholder", False):
+        ph = shape.placeholder_format
+        placeholder_type = str(ph.type) if ph.type is not None else None
+        placeholder_idx = ph.idx
+
+    text_chars: int | None = None
+    paragraph_count: int | None = None
+    run_count: int | None = None
+    if getattr(shape, "has_text_frame", False):
+        tf = shape.text_frame
+        text_chars = len(tf.text or "")
+        paragraph_count = len(tf.paragraphs)
+        run_count = sum(len(p.runs) for p in tf.paragraphs)
+
+    return ShapeInfo(
+        name=shape.name,
+        shape_type=str(shape.shape_type),
+        is_placeholder=bool(getattr(shape, "is_placeholder", False)),
+        placeholder_type=placeholder_type,
+        placeholder_idx=placeholder_idx,
+        text_chars=text_chars,
+        paragraph_count=paragraph_count,
+        run_count=run_count,
+        depth=depth,
+    )
+
+
+def _collect_shapes(shapes: Any, depth: int = 0) -> list[ShapeInfo]:
+    """Walk a shape collection recursively, descending into groups.
+
+    Each shape is emitted once; group shapes are emitted before their
+    children, with `depth` incremented for nested shapes so formatters
+    can indent them.
+    """
+    result: list[ShapeInfo] = []
+    for shape in shapes:
+        result.append(_shape_info(shape, depth))
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            result.extend(_collect_shapes(shape.shapes, depth + 1))
+    return result
+
+
 def inspect_template(path: Path | str) -> TemplateInfo:
     """Inspect a pptx/pptm template and return its structural metadata."""
     path = Path(path).expanduser().resolve()
@@ -54,37 +103,7 @@ def inspect_template(path: Path | str) -> TemplateInfo:
 
     slides: list[SlideInfo] = []
     for slide_index, slide in enumerate(prs.slides, start=1):
-        shape_infos: list[ShapeInfo] = []
-        for shape in slide.shapes:
-            placeholder_type = None
-            placeholder_idx = None
-            if shape.is_placeholder:
-                ph = shape.placeholder_format
-                placeholder_type = str(ph.type) if ph.type is not None else None
-                placeholder_idx = ph.idx
-
-            text_chars = None
-            paragraph_count = None
-            run_count = None
-            if shape.has_text_frame:
-                tf = shape.text_frame
-                text_chars = len(tf.text or "")
-                paragraph_count = len(tf.paragraphs)
-                run_count = sum(len(p.runs) for p in tf.paragraphs)
-
-            shape_infos.append(
-                ShapeInfo(
-                    name=shape.name,
-                    shape_type=str(shape.shape_type),
-                    is_placeholder=shape.is_placeholder,
-                    placeholder_type=placeholder_type,
-                    placeholder_idx=placeholder_idx,
-                    text_chars=text_chars,
-                    paragraph_count=paragraph_count,
-                    run_count=run_count,
-                )
-            )
-
+        shape_infos = _collect_shapes(slide.shapes)
         slides.append(
             SlideInfo(
                 index=slide_index,
@@ -114,6 +133,7 @@ def format_template_info(info: TemplateInfo) -> str:
         if not slide.shapes:
             lines.append("  (no shapes)")
         for shape in slide.shapes:
+            indent = "  " + ("  " * shape.depth)
             bits = [repr(shape.name), f"type={shape.shape_type}"]
             if shape.is_placeholder:
                 bits.append(
@@ -122,7 +142,9 @@ def format_template_info(info: TemplateInfo) -> str:
             if shape.text_chars is not None:
                 bits.append(f"text_chars={shape.text_chars}")
                 bits.append(f"paras={shape.paragraph_count}, runs={shape.run_count}")
-            lines.append("  - " + " | ".join(bits))
+            if shape.depth > 0:
+                bits.append(f"depth={shape.depth}")
+            lines.append(indent + "- " + " | ".join(bits))
         lines.append("")
 
     lines.append("=== Slide Layouts available on master ===")
@@ -133,7 +155,11 @@ def format_template_info(info: TemplateInfo) -> str:
 
 
 def shape_names_from_slide(info: TemplateInfo, slide_index: int) -> list[str]:
-    """Return the list of shape names on a specific slide (1-based index)."""
+    """Return the list of shape names on a specific slide (1-based index).
+
+    Includes shapes nested inside groups so scaffold configs written from
+    this list cover every addressable shape on the slide.
+    """
     for slide in info.slides:
         if slide.index == slide_index:
             return [shape.name for shape in slide.shapes]

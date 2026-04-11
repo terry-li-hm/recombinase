@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,7 @@ import yaml
 
 @dataclass
 class TemplateConfig:
-    """Per-template configuration declaring shape name ↔ data field mapping.
+    """Per-template configuration declaring shape name <-> data field mapping.
 
     One config file per pptx template. The config decouples the template's
     internal shape names (which vary per template) from the data fields
@@ -39,11 +40,6 @@ class TemplateConfig:
     """If True, the source (example) slide is removed from the final output
     so only the generated per-record slides remain."""
 
-    bullet_join: str = "\n"
-    """String to split multi-line text on when setting a shape with a scalar
-    string that contains newlines. Also used when the data value is a list
-    to detect if items should become separate paragraphs."""
-
     def validate(self) -> list[str]:
         """Return a list of validation error messages, or empty list if OK."""
         errors: list[str] = []
@@ -60,29 +56,68 @@ def load_config(path: Path | str) -> TemplateConfig:
     """Load a TemplateConfig from a YAML file.
 
     Resolves the `template` path relative to the config file's directory
-    unless it's absolute.
+    unless it's absolute. Raises `ValueError` with a file-path prefix on
+    any malformed or missing field instead of letting a raw TypeError or
+    AttributeError escape.
     """
     path = Path(path).expanduser().resolve()
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
 
     with path.open("r", encoding="utf-8") as fh:
-        data: dict[str, Any] = yaml.safe_load(fh) or {}
+        try:
+            raw = yaml.safe_load(fh)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"{path}: invalid YAML: {exc}") from exc
 
-    template_path_raw = data.get("template")
-    if template_path_raw is None:
+    if raw is None:
+        raise ValueError(f"{path}: config file is empty")
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path}: expected top-level mapping, got {type(raw).__name__}")
+
+    data: dict[str, Any] = raw
+
+    template_raw = data.get("template")
+    if template_raw is None:
         raise ValueError(f"{path}: missing required key 'template'")
+    if not isinstance(template_raw, str):
+        raise ValueError(f"{path}: 'template' must be a string, got {type(template_raw).__name__}")
 
-    template_path = Path(template_path_raw).expanduser()
+    template_path = Path(template_raw).expanduser()
     if not template_path.is_absolute():
         template_path = (path.parent / template_path).resolve()
 
+    source_slide_index_raw = data.get("source_slide_index", 1)
+    if not isinstance(source_slide_index_raw, int) or isinstance(source_slide_index_raw, bool):
+        raise ValueError(
+            f"{path}: 'source_slide_index' must be an integer, got "
+            f"{type(source_slide_index_raw).__name__}"
+        )
+
+    placeholders_raw = data.get("placeholders") or {}
+    if not isinstance(placeholders_raw, dict):
+        raise ValueError(
+            f"{path}: 'placeholders' must be a mapping, got {type(placeholders_raw).__name__}"
+        )
+    for key, value in placeholders_raw.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise ValueError(
+                f"{path}: 'placeholders' entries must be string -> string, got "
+                f"{type(key).__name__} -> {type(value).__name__}"
+            )
+
+    clear_source_slide_raw = data.get("clear_source_slide", True)
+    if not isinstance(clear_source_slide_raw, bool):
+        raise ValueError(
+            f"{path}: 'clear_source_slide' must be a boolean, got "
+            f"{type(clear_source_slide_raw).__name__}"
+        )
+
     config = TemplateConfig(
         template=template_path,
-        source_slide_index=int(data.get("source_slide_index", 1)),
-        placeholders=dict(data.get("placeholders", {}) or {}),
-        clear_source_slide=bool(data.get("clear_source_slide", True)),
-        bullet_join=str(data.get("bullet_join", "\n")),
+        source_slide_index=source_slide_index_raw,
+        placeholders=dict(placeholders_raw),
+        clear_source_slide=clear_source_slide_raw,
     )
 
     errors = config.validate()
@@ -91,6 +126,15 @@ def load_config(path: Path | str) -> TemplateConfig:
         raise ValueError(f"{path}: config validation failed:\n  - {joined}")
 
     return config
+
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slug_from_shape_name(name: str) -> str:
+    """Convert a shape name to a valid YAML key (lowercase, underscored)."""
+    slug = _SLUG_RE.sub("_", name.lower()).strip("_")
+    return slug or "field"
 
 
 def write_scaffold_config(
@@ -105,19 +149,19 @@ def write_scaffold_config(
     """
     lines = [
         f"# Template config for {template_path.name}",
-        "# Generated by `recombinase inspect --write-config`.",
+        "# Generated by `recombinase init`.",
         "# Edit the placeholders section to map your data fields to shape names.",
         "",
         f"template: {template_path}",
         "source_slide_index: 1",
         "clear_source_slide: true",
         "",
-        "# placeholders: data_field_name → shape_name_in_template",
+        "# placeholders: data_field_name -> shape_name_in_template",
         "placeholders:",
     ]
     if shape_names:
         for name in shape_names:
-            slug = name.lower().replace(" ", "_").replace("-", "_").replace(".", "_")
+            slug = _slug_from_shape_name(name)
             lines.append(f"  {slug}: {name}")
     else:
         lines.append("  # (no named shapes found — template has only default names)")

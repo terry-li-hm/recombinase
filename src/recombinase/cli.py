@@ -1,6 +1,7 @@
 """CLI entry point for recombinase, built on Typer for rich human UX.
 
 Subcommands:
+- new      : scaffold a project directory (template/, cv-data/, output/)
 - inspect  : print structural metadata of a pptx template
 - init     : write a scaffold config YAML from a template's shape names
 - generate : populate a template from YAML records and write to an output pptx
@@ -9,9 +10,12 @@ Subcommands:
 from __future__ import annotations
 
 import os
+import traceback
 from pathlib import Path
 
 import typer
+import yaml
+from pptx.exc import PackageNotFoundError
 
 from recombinase import __version__
 from recombinase.config import load_config, write_scaffold_config
@@ -36,12 +40,27 @@ def _default_project_dir() -> Path:
         return Path(onedrive) / "cv"
     return Path.home() / "cv"
 
+
+_WORKFLOW_EPILOG = """\
+[bold]Typical workflow[/bold] (run in order):
+
+  1. [cyan]recombinase new[/cyan]                           scaffold a project folder
+  2. [cyan]recombinase inspect[/cyan] TEMPLATE              see template shape names
+  3. [cyan]recombinase init[/cyan] TEMPLATE                 write a config to edit
+     [dim](then edit the config to map field names to shape names)[/dim]
+  4. [cyan]recombinase generate[/cyan] -c CONFIG -d DATA -o OUT.pptx
+
+Run [cyan]recombinase <command> --help[/cyan] for details on a single command.
+"""
+
+
 app = typer.Typer(
     name="recombinase",
     help=(
         "Template-guided pptx synthesis: inspect templates, scaffold configs, "
         "and generate populated decks from structured YAML data."
     ),
+    epilog=_WORKFLOW_EPILOG,
     no_args_is_help=True,
     add_completion=False,
     rich_markup_mode="rich",
@@ -74,7 +93,7 @@ def cmd_new(
         None,
         help=(
             "Path to the project directory to create. If omitted, defaults to "
-            "$env:OneDrive\\cv on Windows (when OneDrive is configured), "
+            "$env:OneDrive/cv on Windows (when OneDrive is configured), "
             "otherwise ~/cv."
         ),
         resolve_path=True,
@@ -100,13 +119,13 @@ def cmd_new(
     if project_dir is None:
         project_dir = _default_project_dir()
         typer.secho(
-            f"No path given — defaulting to {project_dir}",
+            f"No path given — defaulting to '{project_dir}'",
             fg=typer.colors.CYAN,
         )
 
     if project_dir.exists() and any(project_dir.iterdir()) and not force:
         typer.secho(
-            f"Directory already exists and is not empty: {project_dir} (use --force to proceed)",
+            f"Directory already exists and is not empty: '{project_dir}' (use --force to proceed)",
             fg=typer.colors.RED,
             err=True,
         )
@@ -124,12 +143,12 @@ def cmd_new(
             "## Layout\n\n"
             "- `template/` — place the source .pptx/.pptm template file here\n"
             "- `cv-data/` — one YAML file per record (consultant, use case, etc.)\n"
-            "- `output/` — generated decks land here (ignored by default conventions)\n\n"
+            "- `output/` — generated decks land here\n\n"
             "## Typical workflow\n\n"
             "```\n"
-            "recombinase inspect template/<your-template>.pptm\n"
-            "recombinase init template/<your-template>.pptm -o template/config.yaml\n"
-            "# edit template/config.yaml to map field names → shape names\n"
+            "recombinase inspect template/YOUR_TEMPLATE.pptm\n"
+            "recombinase init template/YOUR_TEMPLATE.pptm -o template/config.yaml\n"
+            "# edit template/config.yaml to map field names to shape names\n"
             "# write one .yaml file per record in cv-data/\n"
             "recombinase generate -c template/config.yaml -d cv-data/ "
             "-o output/deck.pptx\n"
@@ -137,11 +156,11 @@ def cmd_new(
             encoding="utf-8",
         )
 
-    typer.secho(f"Created project: {project_dir}", fg=typer.colors.GREEN)
+    typer.secho(f"Created project: '{project_dir}'", fg=typer.colors.GREEN)
     for sub in subfolders:
         typer.echo(f"  {project_dir / sub}")
     typer.echo("\nNext: place your template file in the template/ folder, then run:")
-    typer.echo(f'  recombinase inspect "{project_dir / "template"}/<your-template>.pptm"')
+    typer.echo(f'  recombinase inspect "{project_dir / "template" / "YOUR_TEMPLATE.pptm"}"')
 
 
 @app.command("inspect")
@@ -156,7 +175,13 @@ def cmd_inspect(
         help="Path to a .pptx/.pptm template file.",
     ),
 ) -> None:
-    """Print structural metadata of a pptx template (no text content)."""
+    """Print structural metadata of a pptx template.
+
+    Shape names, types, placeholder info, and text character counts only —
+    no actual slide text is read or printed, so output is safe to share.
+    Run this first on any new template to discover the shape names you'll
+    reference in the config's `placeholders:` section.
+    """
     info = inspect_template(template)
     typer.echo(format_template_info(info))
 
@@ -198,7 +223,7 @@ def cmd_init(
 
     if not shape_names:
         typer.secho(
-            f"No shapes found on slide {source_slide_index} of {template}",
+            f"No shapes found on slide {source_slide_index} of '{template}'",
             fg=typer.colors.RED,
             err=True,
         )
@@ -206,16 +231,19 @@ def cmd_init(
 
     if output.exists() and not force:
         typer.secho(
-            f"Config file already exists: {output} (use --force to overwrite)",
+            f"Config file already exists: '{output}' (use --force to overwrite)",
             fg=typer.colors.RED,
             err=True,
         )
         raise typer.Exit(code=1)
 
+    output.parent.mkdir(parents=True, exist_ok=True)
     write_scaffold_config(template, shape_names, output)
-    typer.secho(f"Wrote scaffold config: {output}", fg=typer.colors.GREEN)
+    typer.secho(f"Wrote scaffold config: '{output}'", fg=typer.colors.GREEN)
     typer.echo(f"Found {len(shape_names)} shape(s) on slide {source_slide_index}.")
-    typer.echo("Edit the placeholders section to map your data fields to shape names.")
+    typer.echo(
+        f'Next: edit "{output}" to map your data field names (left) to the shape names (right).'
+    )
 
 
 @app.command("generate")
@@ -246,29 +274,64 @@ def cmd_generate(
         ...,
         "--output",
         "-o",
+        resolve_path=True,
         help="Path to write the generated pptx.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Overwrite an existing output file without prompting.",
     ),
     strict: bool = typer.Option(
         False,
         "--strict",
-        help="Exit non-zero if any record produced warnings.",
+        help=(
+            "Exit non-zero if any record had missing-field or missing-shape "
+            "warnings. Default: warnings print but exit 0."
+        ),
     ),
 ) -> None:
     """Generate a populated pptx deck from a template + YAML data directory."""
-    cfg = load_config(config)
-    records = load_records(data_dir)
-
-    if not records:
+    if output.suffix.lower() != ".pptx":
         typer.secho(
-            f"No YAML records found in {data_dir}",
+            f"Warning: output path '{output}' does not end in .pptx — "
+            "PowerPoint may not open it correctly.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+
+    if output.exists() and not force:
+        typer.secho(
+            f"Output file already exists: '{output}' (use --force to overwrite)",
             fg=typer.colors.RED,
             err=True,
         )
         raise typer.Exit(code=1)
 
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    typer.secho(f"Loading config: '{config}'", fg=typer.colors.CYAN)
+    cfg = load_config(config)
+
+    typer.secho(f"Loading records from: '{data_dir}'", fg=typer.colors.CYAN)
+    records = load_records(data_dir)
+
+    if not records:
+        typer.secho(
+            f"No YAML records found in '{data_dir}'",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    typer.secho(
+        f"Generating {len(records)} slide(s) from '{cfg.template.name}'...",
+        fg=typer.colors.CYAN,
+    )
     result = generate_deck(cfg, records, output)
 
-    typer.secho(f"Generated: {result['output']}", fg=typer.colors.GREEN)
+    typer.secho(f"Generated: '{result['output']}'", fg=typer.colors.GREEN)
     typer.echo(f"Records: {result['records_generated']}")
 
     if result["warnings"]:
@@ -283,14 +346,69 @@ def cmd_generate(
             raise typer.Exit(code=2)
 
 
+def _print_error(message: str) -> None:
+    typer.secho(f"Error: {message}", fg=typer.colors.RED, err=True)
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Entry point. Accepts optional argv list for programmatic / test use."""
+    """Entry point. Accepts optional argv list for programmatic / test use.
+
+    Traps known failure modes and prints a clean error message instead of
+    a traceback. Set RECOMBINASE_DEBUG=1 to restore the traceback for
+    debugging.
+    """
+    debug = os.environ.get("RECOMBINASE_DEBUG") == "1"
     try:
         app(args=argv, standalone_mode=False)
     except typer.Exit as exc:
         return exc.exit_code
-    except (FileNotFoundError, ValueError) as exc:
-        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+    except PermissionError as exc:
+        target = getattr(exc, "filename", None)
+        if target:
+            _print_error(
+                f"Cannot write '{target}': the file may be open in PowerPoint. Close it and re-run."
+            )
+        else:
+            _print_error(f"Permission denied: {exc}")
+        if debug:
+            traceback.print_exc()
+        return 1
+    except PackageNotFoundError as exc:
+        _print_error(
+            f"Not a valid pptx file: {exc}. The file may be corrupt, empty, "
+            "or in a format python-pptx can't read."
+        )
+        if debug:
+            traceback.print_exc()
+        return 1
+    except yaml.YAMLError as exc:
+        _print_error(f"Invalid YAML: {exc}")
+        if debug:
+            traceback.print_exc()
+        return 1
+    except FileNotFoundError as exc:
+        _print_error(str(exc))
+        if debug:
+            traceback.print_exc()
+        return 1
+    except (ValueError, NotADirectoryError) as exc:
+        _print_error(str(exc))
+        if debug:
+            traceback.print_exc()
+        return 1
+    except Exception as exc:
+        # Last-resort CLI guard: ruff BLE001 is suppressed via per-file-ignore
+        # in pyproject.toml because a human-facing CLI should never present a
+        # raw Python traceback on an unexpected exception class.
+        _print_error(f"Unexpected {type(exc).__name__}: {exc}")
+        if debug:
+            traceback.print_exc()
+        else:
+            typer.secho(
+                "  (set RECOMBINASE_DEBUG=1 to see the full traceback)",
+                fg=typer.colors.RED,
+                err=True,
+            )
         return 1
     return 0
 

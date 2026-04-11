@@ -42,6 +42,27 @@ The template config is intentionally per-template rather than hardcoded in the p
 
 ## Usage
 
+### 0. Scaffold a project (optional, Windows/OneDrive friendly)
+
+Before touching any template, `recombinase new` creates a conventional folder layout you can drop your pptx into:
+
+```
+recombinase new              # defaults to %OneDrive%/cv, or ~/cv
+recombinase new C:\Work\Pack # explicit path
+```
+
+Result:
+
+```
+<project>/
+├── README.md
+├── template/   # drop your .pptm/.pptx here
+├── cv-data/    # one YAML file per record (consultant, use case, etc.)
+└── output/     # generated decks land here
+```
+
+Then `cd` into the scaffolded directory and use the remaining commands with relative paths.
+
 ### 1. Inspect a template
 
 Discover the shape names on each slide — structural metadata only, never the actual text content. Safe to share the output.

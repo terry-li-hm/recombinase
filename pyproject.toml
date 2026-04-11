@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "recombinase"
-version = "0.1.4"
+version = "0.1.5"
 description = "Template-guided document synthesis: extract structured content from source pptx files and recombine into a canonical template"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -75,8 +75,14 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["N802"]  # allow lowercase test function names
-"src/recombinase/cli.py" = ["B008"]  # Typer requires function calls in arg defaults
+"tests/**" = [
+    "N802",  # allow lowercase test function names
+    "N806",  # allow camelCase locals that mirror OOXML element names
+]
+"src/recombinase/cli.py" = [
+    "B008",    # Typer requires function calls in arg defaults
+    "BLE001",  # last-resort CLI guard must catch broad Exception
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

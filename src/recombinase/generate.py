@@ -9,6 +9,7 @@ free via slide duplication.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -16,9 +17,13 @@ from typing import Any
 
 import yaml
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.slide import Slide
 
 from recombinase.config import TemplateConfig
+
+# OOXML namespace used by r:id / r:embed / r:link attributes inside shape XML.
+_R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
 
 def load_records(data_dir: Path | str) -> list[dict[str, Any]]:
@@ -42,16 +47,33 @@ def load_records(data_dir: Path | str) -> list[dict[str, Any]]:
             continue
         if not isinstance(data, dict):
             raise ValueError(f"{yaml_file}: expected top-level mapping, got {type(data).__name__}")
-        data.setdefault("_source_file", str(yaml_file))
         records.append(data)
     return records
 
 
-def duplicate_slide(presentation: Any, source_slide: Slide) -> Slide:
-    """Duplicate a slide within a presentation, preserving all shapes and formatting.
+def _walk_shapes(shapes: Any) -> Iterator[Any]:
+    """Walk a shape collection, yielding every shape including group members.
 
-    python-pptx does not provide a native slide.duplicate() — this is the
-    canonical workaround using lxml deep-copy of the shape tree.
+    PowerPoint allows shapes to be nested inside GroupShape elements
+    (`<p:grpSp>`), and iterating `slide.shapes` directly only yields the
+    top-level children. This walker recurses into groups so every named
+    shape is reachable by `find_shape_by_name` and visible to `inspect`.
+    """
+    for shape in shapes:
+        yield shape
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            yield from _walk_shapes(shape.shapes)
+
+
+def duplicate_slide(presentation: Any, source_slide: Slide) -> Slide:
+    """Duplicate a slide, preserving shapes, formatting, and relationships.
+
+    python-pptx has no native `slide.duplicate()` — this is the canonical
+    workaround extended to also copy the source slide's relationships and
+    rewrite `r:id` / `r:embed` / `r:link` references in the copied XML.
+    Without the rel copy, deep-copied shapes referencing pictures, hyperlinks,
+    or embedded charts produce dangling references on the new slide and
+    those elements render as broken or empty.
 
     Ref: https://github.com/scanny/python-pptx/issues/132
     """
@@ -64,18 +86,44 @@ def duplicate_slide(presentation: Any, source_slide: Slide) -> Slide:
         sp = shape._element
         sp.getparent().remove(sp)
 
-    # Copy each shape XML element from the source slide into the new slide.
+    # Copy relationships from the source slide onto the new slide, building an
+    # old-rId -> new-rId map so that copied shape XML can be rewritten. Skip
+    # notesSlide relationships — those belong to the notes subsystem and
+    # copying them would attach the source's notes to the new slide.
+    rel_id_map: dict[str, str] = {}
+    for old_rid, rel in source_slide.part.rels.items():
+        if "notesSlide" in rel.reltype:
+            continue
+        if rel.is_external:
+            new_rid = new_slide.part.rels.get_or_add_ext_rel(rel.reltype, rel.target_ref)
+        else:
+            new_rid = new_slide.part.rels.get_or_add(rel.reltype, rel.target_part)
+        rel_id_map[old_rid] = new_rid
+
+    # Copy each top-level shape XML element from the source slide into the new
+    # slide, rewriting any r: references so they resolve against the new rels.
     for shape in source_slide.shapes:
-        el = shape._element
-        new_el = deepcopy(el)
+        new_el = deepcopy(shape._element)
+        for descendant in new_el.iter():
+            for attr in ("id", "embed", "link"):
+                qname = f"{{{_R_NS}}}{attr}"
+                val = descendant.get(qname)
+                if val and val in rel_id_map and val != rel_id_map[val]:
+                    descendant.set(qname, rel_id_map[val])
         new_slide.shapes._spTree.append(new_el)
 
     return new_slide
 
 
 def find_shape_by_name(slide: Slide, name: str) -> Any | None:
-    """Find a shape on a slide by its .name property. Returns None if missing."""
-    for shape in slide.shapes:
+    """Find a shape on a slide by its `.name` property, recursing into groups.
+
+    Returns the first matching shape at any nesting depth, or None if no
+    shape with that name exists on the slide. CV templates commonly group
+    Name + Role + Headshot as a single unit, and without group recursion
+    those named shapes would be unreachable here.
+    """
+    for shape in _walk_shapes(slide.shapes):
         if shape.name == name:
             return shape
     return None
@@ -84,10 +132,12 @@ def find_shape_by_name(slide: Slide, name: str) -> Any | None:
 def set_shape_value(shape: Any, value: Any) -> None:
     """Write a value into a shape's text frame.
 
-    Handles three cases:
-    - scalar string → single text value, replaces whatever was there
-    - list of strings → each item becomes a separate paragraph (bullet point)
-    - None or empty → clear the text frame
+    Handles:
+    - None or empty string -> clear the text frame
+    - list -> each item becomes a separate paragraph (bullet points inherit
+      from the placeholder's paragraph-level formatting in the template)
+    - scalar (str / int / float / any str-convertible) -> a single text
+      value; strings containing `\\n` are split into paragraphs
 
     Caveat: setting text frame `.text` flattens rich-text runs within the
     shape to the placeholder's default run style. If a placeholder needs
@@ -104,44 +154,51 @@ def set_shape_value(shape: Any, value: Any) -> None:
         return
 
     if isinstance(value, list):
-        # Variable-length list → one paragraph per item (bullets inherit style
-        # from the placeholder's paragraph-level formatting).
-        items = [str(item) for item in value if item is not None]
-        if not items:
-            tf.clear()
-            return
-        tf.clear()
-        # After clear(), text_frame has exactly one empty paragraph.
-        first_p = tf.paragraphs[0]
-        first_p.text = items[0]
-        for item in items[1:]:
-            p = tf.add_paragraph()
-            p.text = item
+        items = [str(item) for item in value if item is not None and item != ""]
+        _write_paragraphs(tf, items)
         return
 
-    if isinstance(value, (int, float)):
-        value = str(value)
-
-    # Scalar string: may contain newlines, which we interpret as paragraphs.
+    # Scalar: stringify first, then either split on newlines (paragraph form)
+    # or write as a single text value.
     text = str(value)
     if "\n" in text:
-        set_shape_value(shape, text.split("\n"))
+        _write_paragraphs(tf, text.split("\n"))
         return
 
     tf.text = text
 
 
+def _write_paragraphs(text_frame: Any, items: list[str]) -> None:
+    """Write a list of strings as paragraphs into a text frame, one per item.
+
+    Empty input clears the text frame. Non-empty input reuses the existing
+    single paragraph for the first item and appends new paragraphs for the
+    rest, so bullet formatting from the template is preserved.
+    """
+    if not items:
+        text_frame.clear()
+        return
+    text_frame.clear()
+    # After clear(), text_frame has exactly one empty paragraph to reuse.
+    text_frame.paragraphs[0].text = items[0]
+    for item in items[1:]:
+        text_frame.add_paragraph().text = item
+
+
 def remove_slide(presentation: Any, slide: Slide) -> None:
-    """Remove a slide from the presentation (python-pptx has no native API).
+    """Remove a slide from the presentation.
+
+    python-pptx has no native `slides.remove()` — this walks the slide id
+    list on the presentation part, finds the relationship whose target
+    matches the target slide, and drops both the rel and the id list entry.
 
     Ref: https://github.com/scanny/python-pptx/issues/67
     """
     slide_id = slide.slide_id
     xml_slides = presentation.slides._sldIdLst
-    slides_list = list(xml_slides)
 
-    for sl in slides_list:
-        rid = sl.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+    for sl in xml_slides:
+        rid = sl.get(f"{{{_R_NS}}}id")
         if rid is None:
             continue
         slide_from_rel = presentation.part.related_part(rid).slide
@@ -172,7 +229,7 @@ def generate_deck(
             f"(template has {total_slides} slide(s))"
         )
 
-    # 1-based → 0-based
+    # 1-based -> 0-based
     source_slide = presentation.slides[config.source_slide_index - 1]
 
     warnings: list[str] = []
