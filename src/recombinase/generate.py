@@ -171,11 +171,15 @@ def set_shape_value(shape: Any, value: Any) -> None:
         _write_paragraphs(tf, items)
         return
 
-    # Scalar: stringify and route through _write_paragraphs so rPr/pPr are
-    # preserved. Multi-line strings split into paragraphs; single-line scalars
-    # go as a one-item list.
+    # Scalar: stringify and route through the right writer. Multi-line scalars
+    # that target a multi-run-br template paragraph (run + <a:br/> + run with
+    # distinct rPr) get special handling to preserve each run's formatting —
+    # that's the CV idiom of "bold Role, Firm\n(italic duration)". Otherwise
+    # fall back to _write_paragraphs so rPr/pPr are preserved.
     text = str(value)
-    if "\n" in text:
+    if "\n" in text and _is_multirun_br_first_paragraph(tf):
+        _write_multirun_br(tf, text.split("\n"))
+    elif "\n" in text:
         _write_paragraphs(tf, text.split("\n"))
     else:
         _write_paragraphs(tf, [text])
@@ -255,6 +259,100 @@ def _apply_preserved_format(paragraph: Any, pPr_copy: Any, rPr_copy: Any) -> Non
             if existing_rPr is not None:
                 first_r.remove(existing_rPr)
             first_r.insert(0, deepcopy(rPr_copy))
+
+
+def _is_multirun_br_first_paragraph(text_frame: Any) -> bool:
+    """Return True if the text frame's first paragraph is a "dual-run-br" idiom.
+
+    The pattern is a single paragraph containing two or more `<a:r>` runs
+    separated by at least one `<a:br/>` soft break — each run carrying its
+    own `<a:rPr>` so the runs can render with distinct formatting (bold
+    primary text, italic bracketed secondary, etc.). This is the CV
+    template idiom for cells like::
+
+        Management Principal, client        (run 0, bold)
+        (3 years)                          (run 1, italic)
+
+    where the line break is Shift+Enter in PowerPoint — a `<a:br/>`, not
+    a new paragraph. Used by `set_shape_value` and `populate_table` to
+    decide whether to route a multi-line scalar value through
+    `_write_multirun_br` (which preserves per-run rPr and the br) or
+    through `_write_paragraphs` (which treats each line as a new
+    paragraph and flattens to one rPr profile).
+    """
+    from pptx.oxml.ns import qn
+
+    paragraphs = text_frame.paragraphs
+    if not paragraphs:
+        return False
+    p_xml = paragraphs[0]._p
+    runs = p_xml.findall(qn("a:r"))
+    brs = p_xml.findall(qn("a:br"))
+    return len(runs) >= 2 and len(brs) >= 1
+
+
+def _write_multirun_br(text_frame: Any, parts: list[str]) -> None:
+    """Overwrite each run's `<a:t>` text in the first paragraph, in order.
+
+    Preserves per-run `<a:rPr>` (font, weight, italics, colour) and any
+    `<a:br/>` soft breaks between runs. The paragraph structure stays
+    exactly as the template authored it; only the text content of each
+    `<a:t>` element changes. Any paragraphs after the first are dropped
+    so the output matches the template's single-paragraph layout.
+
+    Part / run count handling:
+    - len(parts) == len(runs): one-to-one, each part replaces its run's text.
+    - len(parts) <  len(runs): trailing runs get their text cleared (their
+      rPr is preserved so the shape doesn't reflow on open).
+    - len(parts) >  len(runs): excess parts are appended to the last run's
+      text joined by a single space so content is never silently dropped.
+
+    Empty input clears the text frame and returns.
+    """
+    from pptx.oxml.ns import qn
+
+    if not parts:
+        text_frame.clear()
+        return
+
+    paragraphs = text_frame.paragraphs
+    if not paragraphs:
+        return
+    first_p_xml = paragraphs[0]._p
+    runs = first_p_xml.findall(qn("a:r"))
+    if not runs:
+        # No runs to overwrite — fall back to paragraph-style write so
+        # the caller's content still lands somewhere visible.
+        _write_paragraphs(text_frame, parts)
+        return
+
+    # Pad-or-merge parts to match run count.
+    if len(parts) < len(runs):
+        aligned: list[str] = list(parts) + [""] * (len(runs) - len(parts))
+    elif len(parts) > len(runs):
+        aligned = list(parts[: len(runs) - 1])
+        leftover = " ".join(parts[len(runs) - 1 :])
+        aligned.append(leftover)
+    else:
+        aligned = list(parts)
+
+    for run, part in zip(runs, aligned, strict=True):
+        t_element = run.find(qn("a:t"))
+        if t_element is None:
+            # Degenerate run with no <a:t> child (rare); inject one so the
+            # text lands somewhere rather than being silently dropped.
+            from lxml import etree
+
+            t_element = etree.SubElement(run, qn("a:t"))
+        t_element.text = part
+
+    # Drop any paragraphs beyond the first — this idiom is
+    # single-paragraph by definition, and leaving trailing paragraphs
+    # from the template example would leak stale content.
+    txBody = first_p_xml.getparent()
+    all_paras = txBody.findall(qn("a:p"))
+    for extra_p in all_paras[1:]:
+        txBody.remove(extra_p)
 
 
 def _capture_paragraph_profile(paragraphs: Any, index: int) -> tuple[Any | None, Any | None]:
@@ -531,17 +629,21 @@ def populate_table(shape: Any, table_config: TableConfig, rows: list[Any]) -> li
                 text = table_config.list_joiner.join(items)
             else:
                 text = str(value)
-            # Always route through _write_paragraphs so the cell's pPr AND
-            # run-level rPr (font size, color, weight) are preserved. A prior
-            # fast path via `cell.text_frame.text = text` for single-line
-            # values silently flattened run-level font to defaults — the same
-            # bug `set_shape_value` was fixed for in v0.1.10. client CV role
-            # column rendered at 18pt instead of the template's 7pt because
-            # of this.
-            if "\n" in text:
-                _write_paragraphs(cell.text_frame, text.split("\n"))
+            # Route the write based on the source cell's structure:
+            # - Multi-run-br idiom (one para, >=2 runs, >=1 br) with a
+            #   newline-containing value: preserve per-run rPr and the br
+            #   so the CV "bold Role\n(italic duration)" idiom survives.
+            # - Otherwise route through _write_paragraphs so the cell's pPr
+            #   AND run-level rPr (font size, colour, weight) are preserved.
+            #   A prior fast path via `cell.text_frame.text = text` flattened
+            #   run-level font on single-line writes — the v0.1.13 fix.
+            cell_tf = cell.text_frame
+            if "\n" in text and _is_multirun_br_first_paragraph(cell_tf):
+                _write_multirun_br(cell_tf, text.split("\n"))
+            elif "\n" in text:
+                _write_paragraphs(cell_tf, text.split("\n"))
             else:
-                _write_paragraphs(cell.text_frame, [text])
+                _write_paragraphs(cell_tf, [text])
         # Clear any trailing cells on this row that aren't covered by columns —
         # templates sometimes have more physical cells than configured columns,
         # and leaving them with example text would leak.

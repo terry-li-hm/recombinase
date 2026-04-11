@@ -5,6 +5,49 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.15] - 2026-04-12
+
+### Added
+
+- **Multi-run soft-break cell preservation.** New auto-detected render
+  path for the CV template idiom where a single cell paragraph
+  contains two (or more) runs separated by a `<a:br/>` soft line
+  break, each run carrying distinct formatting — typically a bold
+  primary line plus an italic bracketed secondary line:
+
+  ```
+  Management Principal, client          (bold run 0)
+  (3 years)                            (italic run 1)
+  ```
+
+  `populate_table` and `set_shape_value` now check whether the source
+  cell's first paragraph matches the "dual-run-br" pattern (one
+  paragraph, ≥2 `<a:r>` runs, ≥1 `<a:br/>`). When a scalar value
+  containing `\n` is written into such a cell, the new
+  `_write_multirun_br` writer splits the value on `\n` and overwrites
+  each run's `<a:t>` text in order — preserving every run's `<a:rPr>`
+  (bold / italic / font / colour) and the `<a:br/>` soft break
+  between them. Non-multirun-br cells continue to route through
+  `_write_paragraphs` unchanged, so list values still render as
+  multi-paragraph bullets.
+- Part / run count handling: fewer parts than runs → trailing runs
+  get their text cleared but keep their rPr; more parts than runs →
+  excess parts merge into the last run's text joined by a space so
+  content is never silently dropped.
+- 4 new regression tests covering: dual-run-br cell in a populated
+  table (bold + italic preserved across 2 data rows), placeholder via
+  `set_shape_value` with the same pattern, plain multi-paragraph cell
+  fallback (bullets still work for achievements-style cells), and
+  unequal-part graceful handling. 160 → 164 tests.
+
+### Context
+
+Driven by the client CV template's career and recent-projects columns,
+where every cell looks like `"Role, Firm\n(duration)"` with mixed
+bold / italic runs in a single paragraph. Prior behaviour flattened
+this into two separate paragraphs with a single rPr profile, losing
+the italic second line.
+
 ## [0.1.14] - 2026-04-12
 
 ### Added

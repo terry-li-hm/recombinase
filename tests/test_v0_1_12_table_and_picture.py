@@ -842,3 +842,207 @@ def test_generate_deck_populates_sections_end_to_end(tmp_path: Path) -> None:
     assert shape is not None
     texts = [p.text for p in shape.text_frame.paragraphs]
     assert texts == ["FS Industry", "Retail", "Functional", "Risk", "Audit"]
+
+
+# -- populate_table / set_shape_value: multi-run-br preservation (v0.1.15) -
+
+
+def _build_cell_with_multirun_br(cell: object) -> None:
+    """Seed a table cell with a single paragraph containing:
+
+        <a:r b="1">Example Primary, Firm</a:r>
+        <a:br/>
+        <a:r i="1">(N years)</a:r>
+
+    This is the CV template idiom `_write_multirun_br` preserves:
+    bold run + soft break + italic run in a single paragraph.
+    """
+    from lxml import etree
+    from pptx.oxml.ns import qn
+
+    tf = cell.text_frame
+    tf.text = ""  # normalise to single empty paragraph
+    p_xml = tf.paragraphs[0]._p
+    # Drop the empty run the normalisation left behind
+    for existing_run in p_xml.findall(qn("a:r")):
+        p_xml.remove(existing_run)
+
+    # Run 0: bold primary
+    r0 = etree.SubElement(p_xml, qn("a:r"))
+    rPr0 = etree.SubElement(r0, qn("a:rPr"))
+    rPr0.set("b", "1")
+    t0 = etree.SubElement(r0, qn("a:t"))
+    t0.text = "Example Primary, Firm"
+    # Soft break
+    etree.SubElement(p_xml, qn("a:br"))
+    # Run 1: italic secondary
+    r1 = etree.SubElement(p_xml, qn("a:r"))
+    rPr1 = etree.SubElement(r1, qn("a:rPr"))
+    rPr1.set("i", "1")
+    t1 = etree.SubElement(r1, qn("a:t"))
+    t1.text = "(5 years)"
+
+
+def test_populate_table_preserves_multirun_br_on_scalar_with_newline(
+    tmp_path: Path,
+) -> None:
+    """Scalar values containing `\\n` route to the multirun-br writer when
+    the source cell has the dual-run-br idiom, preserving per-run rPr
+    and the soft break. Regression for the client career/recent_projects
+    column where "Role\\n(duration)" was flattening into a single run."""
+    template_path = tmp_path / "table.pptx"
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table_shape = slide.shapes.add_table(
+        rows=3, cols=2, left=Inches(0.5), top=Inches(0.5), width=Inches(8), height=Inches(2)
+    )
+    table_shape.name = "career"
+    table = table_shape.table
+    table.cell(0, 0).text = "Role"
+    table.cell(0, 1).text = "Organisation"
+    # Body rows: column 0 has the multi-run-br idiom
+    for row_idx in (1, 2):
+        _build_cell_with_multirun_br(table.cell(row_idx, 0))
+        table.cell(row_idx, 1).text = "Example Firm"
+    prs.save(str(template_path))
+
+    prs2 = Presentation(str(template_path))
+    shape = find_shape_by_name(prs2.slides[0], "career")
+    assert shape is not None
+    config = TableConfig(
+        shape="career",
+        columns=["role", "organisation"],
+        header_row=True,
+    )
+    rows = [
+        {"role": "Management Principal, client\n(3 years)", "organisation": "client"},
+        {"role": "AGM, China CITIC Bank International\n(3.5 years)", "organisation": "CNCBI"},
+    ]
+    warnings = populate_table(shape, config, rows)
+    assert warnings == []
+
+    # Row 1: two runs preserved, first bold + new primary text, second italic + new years
+    cell_r1 = shape.table.cell(1, 0)
+    paragraphs_r1 = cell_r1.text_frame.paragraphs
+    assert len(paragraphs_r1) == 1, "dual-run-br cell must stay single-paragraph"
+    runs_r1 = paragraphs_r1[0].runs
+    assert len(runs_r1) == 2, f"expected 2 runs, got {len(runs_r1)}"
+    assert runs_r1[0].text == "Management Principal, client"
+    assert runs_r1[0].font.bold is True, "primary run lost bold rPr"
+    assert runs_r1[1].text == "(3 years)"
+    assert runs_r1[1].font.italic is True, "secondary run lost italic rPr"
+    # Soft break still in the XML
+    from pptx.oxml.ns import qn
+
+    br_elements = paragraphs_r1[0]._p.findall(qn("a:br"))
+    assert len(br_elements) == 1, "soft break <a:br/> was dropped"
+
+    # Row 2: same structure, different text
+    cell_r2 = shape.table.cell(2, 0)
+    runs_r2 = cell_r2.text_frame.paragraphs[0].runs
+    assert runs_r2[0].text == "AGM, China CITIC Bank International"
+    assert runs_r2[0].font.bold is True
+    assert runs_r2[1].text == "(3.5 years)"
+    assert runs_r2[1].font.italic is True
+
+
+def test_set_shape_value_preserves_multirun_br_on_placeholder() -> None:
+    """Same multirun-br preservation applies to a standalone text box
+    populated via set_shape_value, not just table cells. In-memory — text
+    boxes don't survive save/reload through direct lxml manipulation (the
+    pptx serialisation pipeline rebuilds text body from cached state),
+    but the writer itself operates on live lxml elements so we can
+    unit-test it without a round-trip."""
+    from recombinase.generate import set_shape_value
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    txbox = slide.shapes.add_textbox(
+        left=Inches(0.5), top=Inches(0.5), width=Inches(8), height=Inches(2)
+    )
+    txbox.name = "role_title"
+    _build_cell_with_multirun_br(txbox)
+
+    set_shape_value(txbox, "Principal Consultant, AI Solution Lead\n(10 years)")
+
+    paragraphs = txbox.text_frame.paragraphs
+    assert len(paragraphs) == 1
+    runs = paragraphs[0].runs
+    assert len(runs) == 2
+    assert runs[0].text == "Principal Consultant, AI Solution Lead"
+    assert runs[0].font.bold is True
+    assert runs[1].text == "(10 years)"
+    assert runs[1].font.italic is True
+
+
+def test_populate_table_falls_back_on_multi_paragraph_cell(tmp_path: Path) -> None:
+    """When the source cell is multi-paragraph (not multi-run-br), values
+    with newlines still route through _write_paragraphs so each line
+    becomes a bulleted paragraph — the achievements column idiom."""
+    template_path = tmp_path / "fallback.pptx"
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table_shape = slide.shapes.add_table(
+        rows=2, cols=1, left=Inches(0.5), top=Inches(0.5), width=Inches(8), height=Inches(2)
+    )
+    table_shape.name = "achievements_tbl"
+    table_shape.table.cell(0, 0).text = "Header"
+    # Body: plain single-paragraph single-run cell (no dual-run-br idiom)
+    table_shape.table.cell(1, 0).text = "Example achievement"
+    prs.save(str(template_path))
+
+    prs2 = Presentation(str(template_path))
+    shape = find_shape_by_name(prs2.slides[0], "achievements_tbl")
+    assert shape is not None
+    config = TableConfig(shape="achievements_tbl", columns=["ach"], header_row=True)
+    rows = [{"ach": ["First win", "Second win", "Third win"]}]
+    warnings = populate_table(shape, config, rows)
+    assert warnings == []
+
+    cell = shape.table.cell(1, 0)
+    texts = [p.text for p in cell.text_frame.paragraphs]
+    assert texts == ["First win", "Second win", "Third win"], (
+        "non-multirun-br cell must still use paragraph-based write"
+    )
+
+
+def test_write_multirun_br_handles_unequal_parts_gracefully() -> None:
+    """Fewer parts than runs → trailing runs cleared but rPr preserved.
+    More parts than runs → excess parts merged into last run's text.
+    In-memory; no save/reload (text boxes don't survive round-trip with
+    manually-built runs, see note in the set_shape_value test above)."""
+    from pptx.oxml.ns import qn
+
+    from recombinase.generate import _write_multirun_br
+
+    # Case 1: one part, two runs → run 0 gets text, run 1 cleared
+    prs1 = Presentation()
+    slide1 = prs1.slides.add_slide(prs1.slide_layouts[5])
+    txbox1 = slide1.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(6), Inches(2))
+    _build_cell_with_multirun_br(txbox1)
+    tf1 = txbox1.text_frame
+    _write_multirun_br(tf1, ["Only one line"])
+    # Read via lxml to bypass any python-pptx run-filtering on empty text
+    runs1_xml = tf1.paragraphs[0]._p.findall(qn("a:r"))
+    assert len(runs1_xml) == 2, f"expected 2 runs preserved, got {len(runs1_xml)}"
+    t0 = runs1_xml[0].find(qn("a:t"))
+    t1 = runs1_xml[1].find(qn("a:t"))
+    assert t0 is not None
+    assert t0.text == "Only one line"
+    assert t1 is not None
+    assert t1.text in ("", None)
+    # rPr preserved even when the run text is empty
+    assert runs1_xml[0].find(qn("a:rPr")).get("b") == "1"
+    assert runs1_xml[1].find(qn("a:rPr")).get("i") == "1"
+
+    # Case 2: three parts, two runs → last two merge into run 1
+    prs2 = Presentation()
+    slide2 = prs2.slides.add_slide(prs2.slide_layouts[5])
+    txbox2 = slide2.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(6), Inches(2))
+    _build_cell_with_multirun_br(txbox2)
+    tf2 = txbox2.text_frame
+    _write_multirun_br(tf2, ["Primary", "Secondary", "Tertiary"])
+    runs2_xml = tf2.paragraphs[0]._p.findall(qn("a:r"))
+    assert len(runs2_xml) == 2
+    assert runs2_xml[0].find(qn("a:t")).text == "Primary"
+    assert runs2_xml[1].find(qn("a:t")).text == "Secondary Tertiary"
