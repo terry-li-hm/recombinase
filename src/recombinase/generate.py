@@ -381,12 +381,17 @@ def populate_table(shape: Any, table_config: TableConfig, rows: list[Any]) -> li
                 text = table_config.list_joiner.join(items)
             else:
                 text = str(value)
-            # Preserve cell's existing paragraph formatting just like
-            # _write_paragraphs does for placeholders.
+            # Always route through _write_paragraphs so the cell's pPr AND
+            # run-level rPr (font size, color, weight) are preserved. A prior
+            # fast path via `cell.text_frame.text = text` for single-line
+            # values silently flattened run-level font to defaults — the same
+            # bug `set_shape_value` was fixed for in v0.1.10. client CV role
+            # column rendered at 18pt instead of the template's 7pt because
+            # of this.
             if "\n" in text:
                 _write_paragraphs(cell.text_frame, text.split("\n"))
             else:
-                cell.text_frame.text = text
+                _write_paragraphs(cell.text_frame, [text])
         # Clear any trailing cells on this row that aren't covered by columns —
         # templates sometimes have more physical cells than configured columns,
         # and leaving them with example text would leak.

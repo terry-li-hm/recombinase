@@ -18,7 +18,7 @@ from pathlib import Path
 
 import yaml
 from pptx import Presentation
-from pptx.util import Inches
+from pptx.util import Inches, Pt
 
 from recombinase.config import TableConfig, load_config
 from recombinase.generate import (
@@ -520,3 +520,85 @@ def test_load_config_rejects_malformed_tables_section(
 
     with pytest.raises(ValueError, match="'tables' must be a mapping"):
         load_config(config_path)
+
+
+# -- populate_table: run-level rPr preservation (v0.1.13 regression) -------
+
+
+def test_populate_table_preserves_cell_run_font_size(tmp_path: Path) -> None:
+    """Single-line cell values must preserve the template's run-level rPr.
+
+    client CV regression: the role column rendered at default 18pt instead
+    of the template's 7pt because `populate_table` took a fast path via
+    `cell.text_frame.text = text` for single-line values — the same bug
+    `set_shape_value` was fixed for in v0.1.10. python-pptx's `.text`
+    setter wipes pPr AND rPr, so run-level font size is silently lost.
+
+    This test builds a template with body cells styled at 7pt, populates
+    them with single-line values, and asserts the output cell still
+    reports 7pt. Without the fix, the populated cell reports no sz or
+    the default, and the visible deck shows 18pt for that column.
+    """
+    template_path = tmp_path / "table.pptx"
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table_shape = slide.shapes.add_table(
+        rows=3, cols=3, left=Inches(0.5), top=Inches(0.5), width=Inches(8), height=Inches(2)
+    )
+    table_shape.name = "recent_projects"
+    table = table_shape.table
+    table.cell(0, 0).text = "Client & Project"
+    table.cell(0, 1).text = "Role"
+    table.cell(0, 2).text = "Achievements"
+    # Pre-fill body rows with example content at an explicit 7pt font so
+    # the template carries real run-level rPr that populate_table must
+    # preserve on overwrite.
+    for row_idx in (1, 2):
+        for col_idx in range(3):
+            cell = table.cell(row_idx, col_idx)
+            cell.text = "Example content"
+            for paragraph in cell.text_frame.paragraphs:
+                for run in paragraph.runs:
+                    run.font.size = Pt(7)
+    prs.save(str(template_path))
+
+    # Sanity check: template's role cell reports 7pt before populate
+    prs_check = Presentation(str(template_path))
+    role_cell_before = prs_check.slides[0].shapes[0].table.cell(1, 1)
+    assert role_cell_before.text_frame.paragraphs[0].runs[0].font.size == Pt(7)
+
+    prs2 = Presentation(str(template_path))
+    shape = find_shape_by_name(prs2.slides[0], "recent_projects")
+    assert shape is not None
+    config = TableConfig(
+        shape="recent_projects",
+        columns=["client_project", "role", "achievements"],
+        header_row=True,
+    )
+    rows = [
+        {
+            "client_project": "Bank A — Governance",
+            "role": "Project lead",
+            "achievements": "Shipped framework",
+        },
+        {
+            "client_project": "Bank B — Tiering",
+            "role": "Advisor",
+            "achievements": "Built taxonomy",
+        },
+    ]
+    warnings = populate_table(shape, config, rows)
+    assert warnings == []
+
+    # Assert the ROLE column preserved its 7pt font size after populate.
+    role_cell_after = shape.table.cell(1, 1)
+    assert role_cell_after.text == "Project lead"
+    run = role_cell_after.text_frame.paragraphs[0].runs[0]
+    assert run.font.size == Pt(7), (
+        f"role column lost font size on populate: got {run.font.size}, expected {Pt(7)}"
+    )
+    # And the second data row too
+    role_cell_row2 = shape.table.cell(2, 1)
+    assert role_cell_row2.text == "Advisor"
+    run2 = role_cell_row2.text_frame.paragraphs[0].runs[0]
+    assert run2.font.size == Pt(7)

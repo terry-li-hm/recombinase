@@ -5,6 +5,24 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] - 2026-04-12
+
+### Fixed
+
+- **Table cell run-level font is preserved on populate.** `populate_table`
+  previously took a fast path via `cell.text_frame.text = text` for
+  single-line cell values, which silently wiped run-level rPr (font
+  size, weight, colour) — the same bug `set_shape_value` was fixed for
+  in v0.1.10. Real-template symptom: the client CV "role" column
+  rendered at the default 18pt instead of the template's 7pt. Fix:
+  always route cell writes through `_write_paragraphs` so pPr AND rPr
+  are captured from the template cell, re-injected into the new run,
+  and font size / weight / colour survive the populate. Regression test
+  builds a 7pt-styled table, populates both data rows, and asserts
+  every populated role cell still reports 7pt.
+- Gemini audit findings #3, #4, #5 for `validate` / tables (carry-over
+  from the v0.1.12 release train — version bump folds those in).
+
 ## [0.1.12] - 2026-04-11
 
 ### Added
