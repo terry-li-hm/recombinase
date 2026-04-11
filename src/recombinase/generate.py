@@ -148,10 +148,14 @@ def set_shape_value(shape: Any, value: Any) -> None:
     - scalar (str / int / float / any str-convertible) -> a single text
       value; strings containing `\\n` are split into paragraphs
 
-    Caveat: setting text frame `.text` flattens rich-text runs within the
-    shape to the placeholder's default run style. If a placeholder needs
-    rich-text preservation (e.g. bold name + italic subtitle in one shape),
-    consider splitting it into two separate shapes in the template.
+    All non-empty values route through ``_write_paragraphs`` so the template's
+    paragraph-level formatting (pPr) AND run-level formatting (rPr — font,
+    size, weight, color) are preserved. A prior version took a "fast path"
+    via ``tf.text = text`` for single-line scalars, but python-pptx's
+    ``.text`` setter wipes both pPr and rPr, which silently flattened
+    run-level font on every scalar-valued shape (name fields, role titles,
+    summary headers). The one-item list path preserves them by capturing
+    and re-injecting before/after clear().
     """
     if not getattr(shape, "has_text_frame", False):
         return
@@ -167,14 +171,14 @@ def set_shape_value(shape: Any, value: Any) -> None:
         _write_paragraphs(tf, items)
         return
 
-    # Scalar: stringify first, then either split on newlines (paragraph form)
-    # or write as a single text value.
+    # Scalar: stringify and route through _write_paragraphs so rPr/pPr are
+    # preserved. Multi-line strings split into paragraphs; single-line scalars
+    # go as a one-item list.
     text = str(value)
     if "\n" in text:
         _write_paragraphs(tf, text.split("\n"))
-        return
-
-    tf.text = text
+    else:
+        _write_paragraphs(tf, [text])
 
 
 def _write_paragraphs(text_frame: Any, items: list[str]) -> None:

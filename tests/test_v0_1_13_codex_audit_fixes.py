@@ -38,6 +38,7 @@ from recombinase.generate import (
     find_shape_by_name,
     load_records,
     populate_table,
+    set_shape_value,
 )
 
 # -- populate_table HIGH fixes ---------------------------------------------
@@ -201,6 +202,56 @@ def test_combined_missing_column_and_short_record(tmp_path: Path) -> None:
     # Both warnings present
     assert any("missing column 'outcome'" in w for w in warnings)
     assert any("clearing 2 unused row" in w for w in warnings)
+
+
+def test_scalar_value_preserves_run_level_font(tmp_path: Path) -> None:
+    """Gemini finding: set_shape_value scalar path must preserve run rPr.
+
+    The prior implementation used `tf.text = text` for single-line scalars,
+    which python-pptx implements as `clear()` + new paragraph — wiping both
+    pPr AND the first run's rPr (font name, size, weight, color). Every
+    scalar-valued shape on a CV template (name, role, summary header) would
+    silently lose its run-level font.
+
+    Build a textbox with Calibri 18pt bold red, populate it via
+    set_shape_value with a scalar, reopen, and assert the font survived.
+    """
+    from pptx.dml.color import RGBColor
+    from pptx.util import Pt
+
+    template = tmp_path / "scalar_font.pptx"
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    tb = slide.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(5), Inches(1))
+    tb.name = "NameField"
+    tb.text_frame.text = "EXAMPLE NAME"
+    run = tb.text_frame.paragraphs[0].runs[0]
+    run.font.name = "Calibri"
+    run.font.size = Pt(18)
+    run.font.bold = True
+    run.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
+    prs.save(str(template))
+
+    prs2 = Presentation(str(template))
+    shape = find_shape_by_name(prs2.slides[0], "NameField")
+    assert shape is not None
+
+    set_shape_value(shape, "Terry Li")
+
+    # Save-reopen cycle to confirm the rPr actually persists in the pptx
+    output = tmp_path / "out.pptx"
+    prs2.save(str(output))
+    reopened = Presentation(str(output))
+    reopened_shape = find_shape_by_name(reopened.slides[0], "NameField")
+    assert reopened_shape is not None
+    para = reopened_shape.text_frame.paragraphs[0]
+    assert para.runs, "text disappeared after set_shape_value"
+    run2 = para.runs[0]
+    assert run2.text == "Terry Li"
+    assert run2.font.name == "Calibri"
+    assert run2.font.size == Pt(18)
+    assert run2.font.bold is True
+    assert run2.font.color.rgb == RGBColor(0xCC, 0x00, 0x00)
 
 
 def test_merged_cells_do_not_crash_clear(tmp_path: Path) -> None:
