@@ -1,4 +1,4 @@
-"""CLI entry point for recombinase.
+"""CLI entry point for recombinase, built on Typer for rich human UX.
 
 Subcommands:
 - inspect  : print structural metadata of a pptx template
@@ -8,9 +8,10 @@ Subcommands:
 
 from __future__ import annotations
 
-import argparse
-import sys
 from pathlib import Path
+from typing import Optional
+
+import typer
 
 from recombinase import __version__
 from recombinase.config import load_config, write_scaffold_config
@@ -21,154 +22,188 @@ from recombinase.inspect import (
     shape_names_from_slide,
 )
 
+app = typer.Typer(
+    name="recombinase",
+    help=(
+        "Template-guided pptx synthesis: inspect templates, scaffold configs, "
+        "and generate populated decks from structured YAML data."
+    ),
+    no_args_is_help=True,
+    add_completion=False,
+    rich_markup_mode="rich",
+)
 
-def cmd_inspect(args: argparse.Namespace) -> int:
-    """Print structural metadata of a pptx template."""
-    info = inspect_template(args.template)
-    print(format_template_info(info))
-    return 0
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"recombinase {__version__}")
+        raise typer.Exit()
 
 
-def cmd_init(args: argparse.Namespace) -> int:
-    """Write a scaffold config YAML from a template's source slide shapes."""
-    template_path = Path(args.template).expanduser().resolve()
-    info = inspect_template(template_path)
-    shape_names = shape_names_from_slide(info, args.source_slide_index)
+@app.callback()
+def _root(
+    version: Optional[bool] = typer.Option(  # noqa: UP045
+        None,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+) -> None:
+    """Recombinase — template-guided pptx synthesis."""
+
+
+@app.command("inspect")
+def cmd_inspect(
+    template: Path = typer.Argument(
+        ...,
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        resolve_path=True,
+        help="Path to a .pptx/.pptm template file.",
+    ),
+) -> None:
+    """Print structural metadata of a pptx template (no text content)."""
+    info = inspect_template(template)
+    typer.echo(format_template_info(info))
+
+
+@app.command("init")
+def cmd_init(
+    template: Path = typer.Argument(
+        ...,
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        resolve_path=True,
+        help="Path to a .pptx/.pptm template file.",
+    ),
+    source_slide_index: int = typer.Option(
+        1,
+        "--source-slide-index",
+        "-s",
+        min=1,
+        help="1-based index of the slide to read shape names from.",
+    ),
+    output: Path = typer.Option(
+        Path("template-config.yaml"),
+        "--output",
+        "-o",
+        help="Path to write the scaffold config YAML.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Overwrite an existing output file.",
+    ),
+) -> None:
+    """Write a scaffold config YAML from a template's shape names."""
+    info = inspect_template(template)
+    shape_names = shape_names_from_slide(info, source_slide_index)
 
     if not shape_names:
-        print(
-            f"No shapes found on slide {args.source_slide_index} of {template_path}",
-            file=sys.stderr,
+        typer.secho(
+            f"No shapes found on slide {source_slide_index} of {template}",
+            fg=typer.colors.RED,
+            err=True,
         )
-        return 1
+        raise typer.Exit(code=1)
 
-    output_path = Path(args.output).expanduser().resolve()
-    if output_path.exists() and not args.force:
-        print(
-            f"Config file already exists: {output_path} (use --force to overwrite)",
-            file=sys.stderr,
+    if output.exists() and not force:
+        typer.secho(
+            f"Config file already exists: {output} (use --force to overwrite)",
+            fg=typer.colors.RED,
+            err=True,
         )
-        return 1
+        raise typer.Exit(code=1)
 
-    write_scaffold_config(template_path, shape_names, output_path)
-    print(f"Wrote scaffold config: {output_path}")
-    print(f"Found {len(shape_names)} shape(s) on slide {args.source_slide_index}.")
-    print("Edit the placeholders section to map your data fields to shape names.")
-    return 0
-
-
-def cmd_generate(args: argparse.Namespace) -> int:
-    """Generate a populated pptx deck from a template + YAML data directory."""
-    config = load_config(args.config)
-    records = load_records(args.data_dir)
-
-    if not records:
-        print(f"No YAML records found in {args.data_dir}", file=sys.stderr)
-        return 1
-
-    result = generate_deck(config, records, args.output)
-
-    print(f"Generated: {result['output']}")
-    print(f"Records: {result['records_generated']}")
-    if result["warnings"]:
-        print(f"Warnings ({len(result['warnings'])}):", file=sys.stderr)
-        for warning in result["warnings"]:
-            print(f"  - {warning}", file=sys.stderr)
-        return 2 if args.strict else 0
-    return 0
+    write_scaffold_config(template, shape_names, output)
+    typer.secho(f"Wrote scaffold config: {output}", fg=typer.colors.GREEN)
+    typer.echo(f"Found {len(shape_names)} shape(s) on slide {source_slide_index}.")
+    typer.echo("Edit the placeholders section to map your data fields to shape names.")
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="recombinase",
-        description=(
-            "Template-guided pptx synthesis: inspect templates, scaffold "
-            "configs, and generate populated decks from structured YAML data."
-        ),
-    )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-
-    sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
-
-    # inspect
-    p_inspect = sub.add_parser("inspect", help="Print structural metadata of a pptx template.")
-    p_inspect.add_argument("template", type=str, help="Path to a .pptx/.pptm file")
-    p_inspect.set_defaults(func=cmd_inspect)
-
-    # init
-    p_init = sub.add_parser(
-        "init",
-        help="Write a scaffold config YAML from a template's shape names.",
-    )
-    p_init.add_argument("template", type=str, help="Path to a .pptx/.pptm file")
-    p_init.add_argument(
-        "--source-slide-index",
-        type=int,
-        default=1,
-        help="1-based index of the source slide (default: 1)",
-    )
-    p_init.add_argument(
-        "--output",
-        "-o",
-        type=str,
-        default="template-config.yaml",
-        help="Path to write the scaffold config (default: ./template-config.yaml)",
-    )
-    p_init.add_argument(
-        "--force",
-        action="store_true",
-        help="Overwrite existing output file",
-    )
-    p_init.set_defaults(func=cmd_init)
-
-    # generate
-    p_gen = sub.add_parser(
-        "generate",
-        help="Generate a populated pptx deck from a template + YAML data.",
-    )
-    p_gen.add_argument(
+@app.command("generate")
+def cmd_generate(
+    config: Path = typer.Option(
+        ...,
         "--config",
         "-c",
-        type=str,
-        required=True,
-        help="Path to the template config YAML",
-    )
-    p_gen.add_argument(
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        resolve_path=True,
+        help="Path to the template config YAML.",
+    ),
+    data_dir: Path = typer.Option(
+        ...,
         "--data-dir",
         "-d",
-        type=str,
-        required=True,
-        help="Directory containing per-record YAML files",
-    )
-    p_gen.add_argument(
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        resolve_path=True,
+        help="Directory containing per-record YAML files.",
+    ),
+    output: Path = typer.Option(
+        ...,
         "--output",
         "-o",
-        type=str,
-        required=True,
-        help="Path to write the generated pptx",
-    )
-    p_gen.add_argument(
+        help="Path to write the generated pptx.",
+    ),
+    strict: bool = typer.Option(
+        False,
         "--strict",
-        action="store_true",
-        help="Exit non-zero if any record produced warnings",
-    )
-    p_gen.set_defaults(func=cmd_generate)
+        help="Exit non-zero if any record produced warnings.",
+    ),
+) -> None:
+    """Generate a populated pptx deck from a template + YAML data directory."""
+    cfg = load_config(config)
+    records = load_records(data_dir)
 
-    return parser
+    if not records:
+        typer.secho(
+            f"No YAML records found in {data_dir}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    result = generate_deck(cfg, records, output)
+
+    typer.secho(f"Generated: {result['output']}", fg=typer.colors.GREEN)
+    typer.echo(f"Records: {result['records_generated']}")
+
+    if result["warnings"]:
+        typer.secho(
+            f"Warnings ({len(result['warnings'])}):",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        for warning in result["warnings"]:
+            typer.secho(f"  - {warning}", fg=typer.colors.YELLOW, err=True)
+        if strict:
+            raise typer.Exit(code=2)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    """Entry point. Accepts optional argv list for programmatic / test use."""
     try:
-        return args.func(args)
-    except FileNotFoundError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        app(args=argv, standalone_mode=False)
+    except typer.Exit as exc:
+        return exc.exit_code
+    except (FileNotFoundError, ValueError) as exc:
+        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
         return 1
-    except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
