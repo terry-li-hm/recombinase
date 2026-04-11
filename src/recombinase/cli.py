@@ -26,6 +26,7 @@ from recombinase.inspect import (
     format_template_info,
     inspect_template,
     shape_names_from_slide,
+    shape_types_from_slide,
 )
 
 
@@ -355,12 +356,36 @@ def cmd_validate(
     info = inspect_template(cfg.template)
 
     template_shape_names = set(shape_names_from_slide(info, cfg.source_slide_index))
+    template_shape_has_table = shape_types_from_slide(info, cfg.source_slide_index)
     placeholder_shape_names = set(cfg.placeholders.values())
     table_shape_names = {table.shape for table in cfg.tables.values()}
     config_shape_names = placeholder_shape_names | table_shape_names
 
     missing_shapes = config_shape_names - template_shape_names
-    unused_shapes = template_shape_names - config_shape_names
+    # Filter default/decorative shape names out of the unused set — they
+    # are almost always structural (background rectangles, decorative
+    # connectors, logos) that legitimately don't need a data mapping.
+    # Without this filter `--strict` is unusable on any real template.
+    _decorative_patterns = re.compile(
+        r"^(Rectangle|Oval|Freeform|Straight Connector|Straight Arrow Connector|"
+        r"TextBox|Title|Subtitle|Content Placeholder|Picture|Group|Table|"
+        r"Chart|Diagram|Line|Arrow) \d+$"
+    )
+    structural_shapes = {name for name in template_shape_names if _decorative_patterns.match(name)}
+    unused_shapes = (template_shape_names - config_shape_names) - structural_shapes
+
+    # Type mismatch: placeholders pointed at table shapes, or tables
+    # pointed at non-table shapes. Catches a silent failure where the
+    # shape name matches but the shape kind is wrong for its role.
+    placeholder_on_table: list[tuple[str, str]] = []  # (field, shape)
+    table_on_non_table: list[tuple[str, str]] = []  # (field, shape)
+    for field_name, shape_name in cfg.placeholders.items():
+        if template_shape_has_table.get(shape_name, False):
+            placeholder_on_table.append((field_name, shape_name))
+    for field_name, table in cfg.tables.items():
+        shape_name = table.shape
+        if shape_name in template_shape_has_table and not template_shape_has_table[shape_name]:
+            table_on_non_table.append((field_name, shape_name))
 
     # Surface matched shapes for context
     matched = config_shape_names & template_shape_names
@@ -401,6 +426,29 @@ def cmd_validate(
             fg=typer.colors.RED,
             err=True,
         )
+        raise typer.Exit(code=1)
+
+    if placeholder_on_table or table_on_non_table:
+        typer.secho(
+            "\nShape type mismatch: the shape name matches the template but "
+            "the shape kind is wrong for its config role.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        for field_name, shape_name in sorted(placeholder_on_table):
+            typer.secho(
+                f"  - placeholder field '{field_name}' -> '{shape_name}' "
+                "(this is a TABLE shape; move it under `tables:` instead)",
+                fg=typer.colors.RED,
+                err=True,
+            )
+        for field_name, shape_name in sorted(table_on_non_table):
+            typer.secho(
+                f"  - table field '{field_name}' -> '{shape_name}' "
+                "(this is NOT a table shape; move it under `placeholders:` instead)",
+                fg=typer.colors.RED,
+                err=True,
+            )
         raise typer.Exit(code=1)
 
     if unused_shapes:

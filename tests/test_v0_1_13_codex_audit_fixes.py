@@ -620,3 +620,224 @@ def test_dry_run_uses_context_manager_for_tempdir(monkeypatch, tmp_path: Path) -
         assert not Path(tempdir).exists(), (
             f"dry-run tempdir {tempdir} leaked after generate_deck raised"
         )
+
+
+# -- Gemini findings #3-5 ---------------------------------------------------
+
+
+def test_footer_rows_preserves_static_footer(tmp_path: Path) -> None:
+    """TableConfig.footer_rows protects trailing rows from population and clearing.
+
+    A template with a "Total" row at the bottom should survive a short
+    record — neither populated as a data row nor wiped by the clear-excess
+    pass.
+    """
+    template = tmp_path / "with_footer.pptx"
+    # 1 header + 3 data + 1 footer = 5 rows total
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table_shape = slide.shapes.add_table(
+        rows=5, cols=3, left=Inches(0.5), top=Inches(0.5), width=Inches(8), height=Inches(2)
+    )
+    table_shape.name = "projects"
+    table = table_shape.table
+    # Header
+    table.cell(0, 0).text = "Client"
+    table.cell(0, 1).text = "Role"
+    table.cell(0, 2).text = "Outcome"
+    # Data placeholders
+    for row_index in range(1, 4):
+        table.cell(row_index, 0).text = f"EXAMPLE CLIENT {row_index}"
+        table.cell(row_index, 1).text = f"EXAMPLE ROLE {row_index}"
+        table.cell(row_index, 2).text = f"EXAMPLE OUTCOME {row_index}"
+    # Footer (must survive)
+    table.cell(4, 0).text = "Total"
+    table.cell(4, 1).text = "—"
+    table.cell(4, 2).text = "3 projects"
+    prs.save(str(template))
+
+    _, shape = _load_table_shape(template)
+    config = TableConfig(
+        shape="projects",
+        columns=["client", "role", "outcome"],
+        header_row=True,
+        footer_rows=1,
+    )
+    rows = [{"client": "Bank A", "role": "Lead", "outcome": "Delivered"}]
+    warnings = populate_table(shape, config, rows)
+
+    table = shape.table
+    # Header preserved
+    assert table.cell(0, 0).text == "Client"
+    # Data row 1 populated
+    assert table.cell(1, 0).text == "Bank A"
+    # Rows 2 and 3 cleared (excess data rows)
+    assert table.cell(2, 0).text == ""
+    assert table.cell(3, 0).text == ""
+    # Footer fully preserved — this is the critical assertion
+    assert table.cell(4, 0).text == "Total"
+    assert table.cell(4, 1).text == "—"
+    assert table.cell(4, 2).text == "3 projects"
+    # Warning names unused rows but NOT the footer
+    assert any("clearing 2 unused row" in w for w in warnings)
+
+
+def test_footer_rows_load_config_roundtrip(tmp_path: Path, simple_template: Path) -> None:
+    """footer_rows must round-trip through load_config."""
+    config_path = tmp_path / "c.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "template": str(simple_template),
+                "placeholders": {"name": "Field"},
+                "tables": {
+                    "projects": {
+                        "shape": "projects",
+                        "columns": ["a", "b"],
+                        "footer_rows": 2,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.tables["projects"].footer_rows == 2
+
+
+def test_footer_rows_rejects_negative_value(tmp_path: Path, simple_template: Path) -> None:
+    """Negative footer_rows must raise, not silently clip."""
+    config_path = tmp_path / "c.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "template": str(simple_template),
+                "placeholders": {"name": "Field"},
+                "tables": {
+                    "projects": {
+                        "shape": "projects",
+                        "columns": ["a"],
+                        "footer_rows": -1,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"footer_rows.*must be >= 0"):
+        load_config(config_path)
+
+
+def test_validate_flags_placeholder_on_table_shape(tmp_path: Path) -> None:
+    """Gemini #4: a placeholder field pointed at a TABLE shape is a type mismatch."""
+    from typer.testing import CliRunner
+
+    from recombinase.cli import app
+
+    template = tmp_path / "mismatch.pptx"
+    _build_template_with_table(template, data_rows=2)  # table named 'projects'
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "template": str(template),
+                "source_slide_index": 1,
+                "clear_source_slide": True,
+                "placeholders": {"wrong_name": "projects"},  # text field -> table shape
+                "tables": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["validate", "--config", str(config_path)])
+    assert result.exit_code == 1
+    assert "TABLE shape" in result.output
+    assert "wrong_name" in result.output
+
+
+def test_validate_flags_table_on_non_table_shape(tmp_path: Path) -> None:
+    """Gemini #4: a table field pointed at a non-table shape is a type mismatch."""
+    from typer.testing import CliRunner
+
+    from recombinase.cli import app
+
+    # Build a template with ONLY a textbox (no table)
+    template = tmp_path / "no_table.pptx"
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    tb = slide.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(5), Inches(1))
+    tb.name = "just_text"
+    tb.text_frame.text = "EXAMPLE"
+    prs.save(str(template))
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "template": str(template),
+                "source_slide_index": 1,
+                "clear_source_slide": True,
+                "placeholders": {},
+                "tables": {
+                    "wrong_table": {
+                        "shape": "just_text",  # table field -> text shape
+                        "columns": ["a", "b"],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["validate", "--config", str(config_path)])
+    assert result.exit_code == 1
+    assert "NOT a table" in result.output
+    assert "wrong_table" in result.output
+
+
+def test_validate_strict_ignores_decorative_shape_names(tmp_path: Path) -> None:
+    """Gemini #5: default decorative shape names (Rectangle N, TextBox N, etc.)
+    must NOT count as "unused" under --strict, otherwise real templates fail."""
+    from typer.testing import CliRunner
+
+    from recombinase.cli import app
+
+    template = tmp_path / "decor.pptx"
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    # Named shape mapped by config
+    tb = slide.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(5), Inches(1))
+    tb.name = "Consultant_Name"
+    tb.text_frame.text = "EXAMPLE"
+    # Decorative shapes with default names
+    for left in (3, 5):
+        deco = slide.shapes.add_textbox(Inches(left), Inches(3), Inches(1), Inches(1))
+        # leave name as default "TextBox N"
+        deco.text_frame.text = "decor"
+    prs.save(str(template))
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "template": str(template),
+                "source_slide_index": 1,
+                "clear_source_slide": True,
+                "placeholders": {"name": "Consultant_Name"},
+                "tables": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    # --strict must exit 0 because the decorative TextBoxes are filtered out
+    result = runner.invoke(app, ["validate", "--config", str(config_path), "--strict"])
+    assert result.exit_code == 0, (
+        f"--strict should ignore decorative shapes, got exit={result.exit_code}, "
+        f"output={result.output}"
+    )

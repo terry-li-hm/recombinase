@@ -326,7 +326,15 @@ def populate_table(shape: Any, table_config: TableConfig, rows: list[Any]) -> li
     table = shape.table
     all_rows = list(table.rows)
     start_row = 1 if table_config.header_row else 0
-    data_rows = all_rows[start_row:]
+    end_row = len(all_rows) - table_config.footer_rows
+    if end_row <= start_row:
+        warnings.append(
+            f"table {shape.name!r} has header_row={table_config.header_row} and "
+            f"footer_rows={table_config.footer_rows} but only {len(all_rows)} "
+            "rows total; no data rows left to populate"
+        )
+        return warnings
+    data_rows = all_rows[start_row:end_row]
 
     if len(rows) > len(data_rows):
         warnings.append(

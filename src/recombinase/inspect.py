@@ -40,6 +40,11 @@ class ShapeInfo:
     underlying image bitmap is still a square, it's just being rendered with
     a circle mask."""
 
+    has_table: bool = False
+    """True if the shape is a table shape (has a `shape.table` attribute).
+    Used by `recombinase validate` to catch config errors where a text
+    placeholder is pointed at a table shape or vice versa."""
+
 
 @dataclass
 class SlideInfo:
@@ -105,6 +110,7 @@ def _shape_info(shape: Any, depth: int = 0) -> ShapeInfo:
         run_count=run_count,
         depth=depth,
         preset_geom=_detect_preset_geom(shape),
+        has_table=bool(getattr(shape, "has_table", False)),
     )
 
 
@@ -193,3 +199,16 @@ def shape_names_from_slide(info: TemplateInfo, slide_index: int) -> list[str]:
         if slide.index == slide_index:
             return [shape.name for shape in slide.shapes]
     return []
+
+
+def shape_types_from_slide(info: TemplateInfo, slide_index: int) -> dict[str, bool]:
+    """Return a dict mapping shape name -> is_table for a specific slide.
+
+    Used by ``recombinase validate`` to check that placeholders aren't
+    pointed at table shapes and vice versa. Later shapes with the same
+    name win — normally shapes have unique names on a slide anyway.
+    """
+    for slide in info.slides:
+        if slide.index == slide_index:
+            return {shape.name: shape.has_table for shape in slide.shapes}
+    return {}

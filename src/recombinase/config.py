@@ -31,6 +31,17 @@ class TableConfig:
     """If True, row 0 of the table is treated as a static header and
     skipped during population. Data rows start at row 1."""
 
+    footer_rows: int = 0
+    """Number of trailing rows to treat as static footer (e.g. a totals
+    row or a notes row at the bottom of the table). These rows are never
+    populated and never cleared — their example content is preserved
+    through the duplicate-and-populate cycle. Default 0 means no footer.
+
+    When set, populate_table treats only ``rows[start_row : -footer_rows]``
+    as data rows. Excess-row clearing still runs but stops before the
+    footer region, so static totals/notes survive the clear pass.
+    """
+
     list_joiner: str = "\n"
     """String used to join list values into cell text. Default is newline,
     which renders as multiple bullets per cell when the template cell has
@@ -196,6 +207,15 @@ def load_config(path: Path | str) -> TemplateConfig:
         header_row_raw = table_data.get("header_row", True)
         if not isinstance(header_row_raw, bool):
             raise ValueError(f"{path}: 'tables.{field_name}.header_row' must be a boolean")
+        footer_rows_raw = table_data.get("footer_rows", 0)
+        if not isinstance(footer_rows_raw, int) or isinstance(footer_rows_raw, bool):
+            raise ValueError(
+                f"{path}: 'tables.{field_name}.footer_rows' must be a non-negative integer"
+            )
+        if footer_rows_raw < 0:
+            raise ValueError(
+                f"{path}: 'tables.{field_name}.footer_rows' must be >= 0 (got {footer_rows_raw})"
+            )
         list_joiner_raw = table_data.get("list_joiner", "\n")
         if not isinstance(list_joiner_raw, str):
             raise ValueError(f"{path}: 'tables.{field_name}.list_joiner' must be a string")
@@ -203,6 +223,7 @@ def load_config(path: Path | str) -> TemplateConfig:
             shape=shape_name_raw,
             columns=list(columns_raw),
             header_row=header_row_raw,
+            footer_rows=footer_rows_raw,
             list_joiner=list_joiner_raw,
         )
 
