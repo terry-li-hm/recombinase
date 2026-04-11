@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "recombinase"
+version = "0.1.0"
+description = "Template-guided document synthesis: extract structured content from source pptx files and recombine into a canonical template"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Terry Li" },
+]
+keywords = ["pptx", "powerpoint", "template", "cv", "credentials", "extraction", "generation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business",
+    "Topic :: Text Processing",
+]
+dependencies = [
+    "python-pptx>=0.6.23",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+recombinase = "recombinase.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/terry-li-hm/recombinase"
+Issues = "https://github.com/terry-li-hm/recombinase/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/recombinase"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100

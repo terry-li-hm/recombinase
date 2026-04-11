@@ -1,0 +1,33 @@
+# Example template config for recombinase.
+#
+# One config per pptx template. The `template:` path can be absolute or
+# relative to this config file's directory. The `placeholders:` section
+# maps data field names (left) to the shape .Name property in the template
+# (right). You find the shape names by running `recombinase inspect` or
+# `recombinase init` on the template first.
+
+template: ./CV_template.pptx
+
+# 1-based index of the slide inside the template that should be duplicated
+# once per record. Usually this is the "filled example" slide that's already
+# styled correctly.
+source_slide_index: 1
+
+# Remove the source (example) slide from the final output so only the
+# generated per-record slides remain. Set to false if you want the example
+# preserved as slide 1 of the output for reference.
+clear_source_slide: true
+
+# Map from data field name → shape .Name in the template.
+# The LEFT side must match the keys in your per-record YAML data files.
+# The RIGHT side must match the shape names reported by `recombinase inspect`.
+placeholders:
+  name: Consultant_Name
+  role: Role_Title
+  years_experience: Years_Experience
+  summary: Summary_Body
+  background: Background_Bullets
+  key_skills: Key_Skills
+  clients: Clients_Served
+  qualifications: Qualifications
+  languages: Languages

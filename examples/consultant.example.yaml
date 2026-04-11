@@ -1,0 +1,46 @@
+# Example per-record data file for recombinase.
+#
+# One file per record (e.g. one per consultant). File names become the sort
+# order in the output deck, so prefix with 01-, 02-, etc. if you want a
+# specific ordering.
+#
+# The field names on the LEFT must match the keys in your template config's
+# `placeholders:` section. Values can be scalar strings, integers, or lists.
+# Lists become separate paragraphs (bullet points) in the target shape,
+# inheriting the template's paragraph-level bullet formatting automatically.
+
+id: jane-doe
+name: Jane Doe
+role: Senior Consultant
+years_experience: 12
+
+summary: >-
+  Wealth-data specialist with twelve years across global banking and
+  consulting. Led data governance and AI strategy engagements at
+  tier-1 APAC financial institutions.
+
+background:
+  - Bank A — Risk modelling lead (2010-2015)
+  - Bank B — Head of analytics (2015-2020)
+  - Bank C — Chief Data Officer, Asia Pacific (2020-present)
+
+key_skills:
+  - Risk modelling and stress testing
+  - AI governance and model risk management
+  - Wealth data architecture
+  - Regulatory reporting automation
+
+clients:
+  - REDACTED
+  - UBS
+  - DBS
+
+qualifications:
+  - CFA Charterholder
+  - FRM
+  - MSc Financial Engineering
+
+languages:
+  - English (native)
+  - Cantonese (fluent)
+  - Mandarin (working)
