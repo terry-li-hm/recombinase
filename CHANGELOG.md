@@ -5,6 +5,17 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-04-11
+
+### Added
+- `recombinase new` now works with no arguments — defaults to
+  `$env:OneDrive\cv` on Windows when OneDrive is configured, otherwise `~/cv`.
+- `CLAUDE.md` documenting project-specific hard constraints, the
+  duplicate-and-populate invariant, release process, and non-goals.
+- `.pre-commit-config.yaml` with ruff, ruff-format, and stock hygiene hooks.
+- GitHub Actions CI workflow running ruff / mypy / pytest on Ubuntu, Windows,
+  and macOS across Python 3.10-3.13.
+
 ## [0.1.3] - 2026-04-11
 
 ### Added

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
-from recombinase.cli import app
+from recombinase.cli import _default_project_dir, app
 
 runner = CliRunner()
 
@@ -73,3 +74,41 @@ def test_version_flag() -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert "recombinase" in result.output
+
+
+def test_default_project_dir_prefers_onedrive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Use uppercase env var names because os.environ is case-sensitive on
+    # Linux/macOS (the code path we're actually testing here). Windows
+    # resolves case-insensitively so real Windows users still get a hit.
+    monkeypatch.setenv("ONEDRIVE", "C:\\Users\\test\\OneDrive - Test")
+    monkeypatch.delenv("ONEDRIVECOMMERCIAL", raising=False)
+    result = _default_project_dir()
+    assert result.name == "cv"
+    assert "OneDrive" in str(result)
+
+
+def test_default_project_dir_falls_back_to_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ONEDRIVE", raising=False)
+    monkeypatch.delenv("ONEDRIVECOMMERCIAL", raising=False)
+    result = _default_project_dir()
+    assert result == Path.home() / "cv"
+
+
+def test_new_with_no_arg_uses_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Redirect the default to a tmp path by setting ONEDRIVE env var
+    fake_onedrive = tmp_path / "OneDrive"
+    fake_onedrive.mkdir()
+    monkeypatch.setenv("ONEDRIVE", str(fake_onedrive))
+
+    result = runner.invoke(app, ["new"])
+    assert result.exit_code == 0, result.output
+
+    expected_project = fake_onedrive / "cv"
+    assert expected_project.exists()
+    assert (expected_project / "template").is_dir()
+    assert (expected_project / "cv-data").is_dir()
+    assert (expected_project / "output").is_dir()

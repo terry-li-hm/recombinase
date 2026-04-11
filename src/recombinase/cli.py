@@ -8,6 +8,7 @@ Subcommands:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import typer
@@ -20,6 +21,20 @@ from recombinase.inspect import (
     inspect_template,
     shape_names_from_slide,
 )
+
+
+def _default_project_dir() -> Path:
+    """Pick a sensible default directory for `recombinase new`.
+
+    On Windows with OneDrive configured, use `$env:OneDrive\\cv`. On other
+    platforms (or if OneDrive isn't set), fall back to `~/cv`. Users can
+    always override by passing an explicit path. Windows environment variables
+    are case-insensitive, so using uppercase keys here works on all platforms.
+    """
+    onedrive = os.environ.get("ONEDRIVE") or os.environ.get("ONEDRIVECOMMERCIAL")
+    if onedrive:
+        return Path(onedrive) / "cv"
+    return Path.home() / "cv"
 
 app = typer.Typer(
     name="recombinase",
@@ -56,8 +71,12 @@ def _root(
 @app.command("new")
 def cmd_new(
     project_dir: Path = typer.Argument(
-        ...,
-        help="Path to the project directory to create (e.g. a folder in OneDrive).",
+        None,
+        help=(
+            "Path to the project directory to create. If omitted, defaults to "
+            "$env:OneDrive\\cv on Windows (when OneDrive is configured), "
+            "otherwise ~/cv."
+        ),
         resolve_path=True,
     ),
     force: bool = typer.Option(
@@ -78,6 +97,13 @@ def cmd_new(
 
     Safe to run in OneDrive — it's a plain mkdir + README write, no sync surprises.
     """
+    if project_dir is None:
+        project_dir = _default_project_dir()
+        typer.secho(
+            f"No path given — defaulting to {project_dir}",
+            fg=typer.colors.CYAN,
+        )
+
     if project_dir.exists() and any(project_dir.iterdir()) and not force:
         typer.secho(
             f"Directory already exists and is not empty: {project_dir} (use --force to proceed)",
