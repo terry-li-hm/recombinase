@@ -18,3 +18,15 @@ repos:
       - id: check-merge-conflict
       - id: mixed-line-ending
         args: [--fix=lf]
+
+  # Block client-specific references from ever landing in the repo.
+  # Belt-and-braces against the "client" leak that slipped into v0.1.4-0.1.10
+  # CHANGELOG entries and commit messages before the git-history rewrite.
+  - repo: local
+    hooks:
+      - id: no-client-names
+        name: forbid client-specific names (capco, hsbc, jiahao, pack-b)
+        language: pygrep
+        entry: (?i)\b(capco|hsbc|jiahao|pack\s*b)\b
+        exclude: ^\.pre-commit-config\.yaml$|^\.git/
+        types_or: [text]
