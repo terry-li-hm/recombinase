@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "recombinase"
-version = "0.1.0"
+version = "0.1.1"
 description = "Template-guided document synthesis: extract structured content from source pptx files and recombine into a canonical template"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,6 +36,9 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "ruff>=0.6",
+    "mypy>=1.8",
+    "types-PyYAML",
 ]
 
 [project.scripts]
@@ -51,3 +54,36 @@ packages = ["src/recombinase"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+    "N",    # pep8-naming
+    "PTH",  # use pathlib
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["N802"]  # allow lowercase test function names
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true

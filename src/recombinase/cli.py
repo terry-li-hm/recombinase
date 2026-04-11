@@ -86,16 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
             "configs, and generate populated decks from structured YAML data."
         ),
     )
-    parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {__version__}"
-    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     # inspect
-    p_inspect = sub.add_parser(
-        "inspect", help="Print structural metadata of a pptx template."
-    )
+    p_inspect = sub.add_parser("inspect", help="Print structural metadata of a pptx template.")
     p_inspect.add_argument("template", type=str, help="Path to a .pptx/.pptm file")
     p_inspect.set_defaults(func=cmd_inspect)
 

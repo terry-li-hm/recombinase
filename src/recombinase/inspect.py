@@ -117,14 +117,11 @@ def format_template_info(info: TemplateInfo) -> str:
             bits = [repr(shape.name), f"type={shape.shape_type}"]
             if shape.is_placeholder:
                 bits.append(
-                    f"placeholder(type={shape.placeholder_type}, "
-                    f"idx={shape.placeholder_idx})"
+                    f"placeholder(type={shape.placeholder_type}, idx={shape.placeholder_idx})"
                 )
             if shape.text_chars is not None:
                 bits.append(f"text_chars={shape.text_chars}")
-                bits.append(
-                    f"paras={shape.paragraph_count}, runs={shape.run_count}"
-                )
+                bits.append(f"paras={shape.paragraph_count}, runs={shape.run_count}")
             lines.append("  - " + " | ".join(bits))
         lines.append("")
 

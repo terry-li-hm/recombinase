@@ -10,12 +10,12 @@ from recombinase.config import TemplateConfig, load_config
 from recombinase.generate import generate_deck
 from recombinase.inspect import inspect_template
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "TemplateConfig",
-    "load_config",
+    "__version__",
     "generate_deck",
     "inspect_template",
-    "__version__",
+    "load_config",
 ]

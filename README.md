@@ -10,15 +10,25 @@ Template-guided pptx synthesis. Take a styled "filled example" slide in a `.pptx
 pip install --user recombinase
 ```
 
-Or from source:
+Dependencies: `python-pptx`, `pyyaml`. That's it.
+
+### Windows 11 install notes
+
+On a standard Windows 11 machine with Python installed:
+
+```powershell
+python -m pip install --user recombinase
+```
+
+The `--user` flag installs into your user profile (`%APPDATA%\Python\Python3XX\site-packages`) which doesn't require admin rights and usually slips past managed-device policy that blocks system-wide installs. After install, the `recombinase` command is on your PATH at `%APPDATA%\Python\Python3XX\Scripts\`. If `recombinase --version` isn't found after install, use `python -m recombinase.cli --version` as a fallback.
+
+### From source (dev)
 
 ```
 git clone https://github.com/terry-li-hm/recombinase.git
 cd recombinase
-pip install --user -e .
+pip install --user -e ".[dev]"
 ```
-
-Dependencies: `python-pptx`, `pyyaml`. That's it.
 
 ## Concepts
 
@@ -155,6 +165,45 @@ List values in the YAML data become separate paragraphs in the target text frame
 ### Warnings, not errors
 
 If a config references a shape name that doesn't exist, or a record is missing a field, `generate` produces a **warning** but continues. This is deliberate: partial output is more useful than total failure during iteration. Pass `--strict` if you want non-zero exit on warnings.
+
+## Recommended file layout (Windows + OneDrive)
+
+For work that involves colleague personal data (CVs, HR records, etc.), keep the package install and the data separate:
+
+```
+%USERPROFILE%\AppData\Roaming\Python\...\   # package install (local, not synced)
+C:\Users\<you>\OneDrive - <Org>\Pack\       # work product (synced, backed up)
+├── template\
+│   ├── CV_template.pptm                   # the canonical pptx
+│   └── template-config.yaml               # mapping shape names → data fields
+├── cv-data\                                # per-consultant YAML records
+│   ├── 01-jane-doe.yaml
+│   ├── 02-john-smith.yaml
+│   └── 03-alice-wong.yaml
+└── output\
+    └── deck.pptx                           # generated
+```
+
+The package itself is generic tooling and lives in your Python site-packages — it has no opinions about any particular template or data set. The work data and configs live in OneDrive where they're backed up, versioned by OneDrive's history, and remain inside your organization's sanctioned storage. Run `recombinase` commands with full paths pointing at OneDrive locations:
+
+```powershell
+cd "C:\Users\<you>\OneDrive - <Org>\Pack"
+recombinase inspect "template\CV_template.pptm"
+recombinase init "template\CV_template.pptm" -o "template\template-config.yaml"
+recombinase generate -c "template\template-config.yaml" -d "cv-data" -o "output\deck.pptx"
+```
+
+## Development
+
+```
+git clone https://github.com/terry-li-hm/recombinase.git
+cd recombinase
+pip install -e ".[dev]"
+ruff check src/ tests/
+ruff format src/ tests/
+mypy src/
+pytest
+```
 
 ## Scope (v0.1)
 

@@ -34,18 +34,14 @@ def load_records(data_dir: Path | str) -> list[dict[str, Any]]:
         raise NotADirectoryError(f"Not a directory: {data_dir}")
 
     records: list[dict[str, Any]] = []
-    yaml_files = sorted(
-        [*data_dir.glob("*.yaml"), *data_dir.glob("*.yml")]
-    )
+    yaml_files = sorted([*data_dir.glob("*.yaml"), *data_dir.glob("*.yml")])
     for yaml_file in yaml_files:
         with yaml_file.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
         if data is None:
             continue
         if not isinstance(data, dict):
-            raise ValueError(
-                f"{yaml_file}: expected top-level mapping, got {type(data).__name__}"
-            )
+            raise ValueError(f"{yaml_file}: expected top-level mapping, got {type(data).__name__}")
         data.setdefault("_source_file", str(yaml_file))
         records.append(data)
     return records
@@ -145,9 +141,7 @@ def remove_slide(presentation: Any, slide: Slide) -> None:
     slides_list = list(xml_slides)
 
     for sl in slides_list:
-        rid = sl.get(
-            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
-        )
+        rid = sl.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
         if rid is None:
             continue
         slide_from_rel = presentation.part.related_part(rid).slide
@@ -196,9 +190,7 @@ def generate_deck(
                 )
                 continue
             if field_name not in record:
-                warnings.append(
-                    f"record {record_id!r}: no value for field {field_name!r}"
-                )
+                warnings.append(f"record {record_id!r}: no value for field {field_name!r}")
                 continue
             try:
                 set_shape_value(shape, record[field_name])

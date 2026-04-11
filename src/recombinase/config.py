@@ -50,13 +50,9 @@ class TemplateConfig:
         if not self.template.exists():
             errors.append(f"Template file not found: {self.template}")
         if self.source_slide_index < 1:
-            errors.append(
-                f"source_slide_index must be >= 1 (got {self.source_slide_index})"
-            )
+            errors.append(f"source_slide_index must be >= 1 (got {self.source_slide_index})")
         if not self.placeholders:
-            errors.append(
-                "placeholders mapping is empty — at least one field is required"
-            )
+            errors.append("placeholders mapping is empty — at least one field is required")
         return errors
 
 
@@ -121,12 +117,7 @@ def write_scaffold_config(
     ]
     if shape_names:
         for name in shape_names:
-            slug = (
-                name.lower()
-                .replace(" ", "_")
-                .replace("-", "_")
-                .replace(".", "_")
-            )
+            slug = name.lower().replace(" ", "_").replace("-", "_").replace(".", "_")
             lines.append(f"  {slug}: {name}")
     else:
         lines.append("  # (no named shapes found — template has only default names)")

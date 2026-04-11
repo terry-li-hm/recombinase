@@ -36,9 +36,7 @@ def _build_sample_template(path: Path) -> None:
 
     # Add a few named text boxes
     def add_textbox(name: str, left: float, top: float, text: str) -> None:
-        box = slide.shapes.add_textbox(
-            Inches(left), Inches(top), Inches(5), Inches(1)
-        )
+        box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(5), Inches(1))
         box.name = name
         tf = box.text_frame
         tf.text = text
