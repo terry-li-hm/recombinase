@@ -5,6 +5,38 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] - 2026-04-11
+
+### Added
+
+- **PowerPoint lock detection in `PackageNotFoundError` handler.** When
+  python-pptx can't open a template file, `_format_package_not_found` now
+  parses the path out of the exception message and checks for a matching
+  `~$<filename>.pptx` lock-file marker in the same directory — the standard
+  Windows Office lock-file convention. If found, emits a specific,
+  actionable error: *"Template '...' is currently open in PowerPoint
+  (lock file '~$...' detected). Close the file in PowerPoint and re-run."*
+  Otherwise falls back to a generic message that still mentions PowerPoint
+  as the most likely cause.
+- 4 regression tests covering: lock file present → PowerPoint hint; lock
+  file absent → generic message still mentions PowerPoint; exception
+  without a parseable path → safe fallback; lock file in a different
+  directory → not false-positive.
+
+### Why now
+
+Caught on the first real Capco CV run. The template was open in PowerPoint
+(user had just renamed a shape via Selection Pane and hadn't closed the
+file) and recombinase's `inspect`/`generate` commands emitted a generic
+"not a valid pptx file" message — user had to guess that the Windows file
+lock was the cause. Now the error message says it directly.
+
+### Deferred
+
+- Table cell population and picture placeholder insertion remain on
+  v0.1.12 (was v0.1.11 plan). Shipping a 4-test hot-fix to unblock the
+  active Pack run took precedence over the bigger features.
+
 ## [0.1.10] - 2026-04-11
 
 ### Fixed

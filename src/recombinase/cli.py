@@ -10,6 +10,7 @@ Subcommands:
 from __future__ import annotations
 
 import os
+import re
 import traceback
 from collections.abc import Callable
 from pathlib import Path
@@ -595,9 +596,36 @@ def _format_permission_error(exc: BaseException) -> str:
 
 
 def _format_package_not_found(exc: BaseException) -> str:
+    """Format a PackageNotFoundError with PowerPoint-lock detection.
+
+    python-pptx raises `PackageNotFoundError` when it can't parse a file as
+    an OOXML zip. The most common root cause on Windows is that the file
+    is currently open in PowerPoint, which holds an exclusive lock AND
+    creates a `~$<filename>.pptx` lock-file marker in the same directory.
+
+    If we can extract the path from the exception message and find a
+    matching `~$` lock file alongside, we know it's the PowerPoint-open
+    case and can emit a precise, actionable error. Otherwise we fall back
+    to a generic "not a valid pptx" message that still mentions the
+    PowerPoint possibility as the most likely cause.
+    """
+    # python-pptx's message format: "Package not found at 'path/to/file.pptx'"
+    path_match = re.search(r"'([^']+)'", str(exc))
+    if path_match:
+        path = Path(path_match.group(1))
+        lock_file = path.parent / f"~${path.name}"
+        if lock_file.exists():
+            return (
+                f"Template '{path}' is currently open in PowerPoint "
+                f"(lock file '{lock_file.name}' detected). "
+                "Close the file in PowerPoint and re-run."
+            )
+
     return (
-        f"Not a valid pptx file: {exc}. The file may be corrupt, empty, "
-        "or in a format python-pptx can't read."
+        f"Not a valid pptx file: {exc}. Most likely cause: the file is "
+        "currently open in PowerPoint — close it and re-run. Otherwise "
+        "the file may be corrupt, empty, or in a format python-pptx "
+        "can't read."
     )
 
 
