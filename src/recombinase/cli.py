@@ -359,7 +359,8 @@ def cmd_validate(
     template_shape_has_table = shape_types_from_slide(info, cfg.source_slide_index)
     placeholder_shape_names = set(cfg.placeholders.values())
     table_shape_names = {table.shape for table in cfg.tables.values()}
-    config_shape_names = placeholder_shape_names | table_shape_names
+    section_shape_names = {section.shape for section in cfg.sections.values()}
+    config_shape_names = placeholder_shape_names | table_shape_names | section_shape_names
 
     missing_shapes = config_shape_names - template_shape_names
     # Filter default/decorative shape names out of the unused set — they
@@ -397,7 +398,7 @@ def cmd_validate(
     if missing_shapes:
         typer.secho(
             f"\nMissing shapes ({len(missing_shapes)}): configured in the "
-            "placeholders or tables map but NOT found on the template's source slide.",
+            "placeholders, tables, or sections map but NOT found on the template's source slide.",
             fg=typer.colors.RED,
             err=True,
         )
@@ -408,11 +409,16 @@ def cmd_validate(
             table_fields = [
                 field for field, table in cfg.tables.items() if table.shape == shape_name
             ]
+            section_fields = [
+                field for field, section in cfg.sections.items() if section.shape == shape_name
+            ]
             provenance_bits: list[str] = []
             if placeholder_fields:
                 provenance_bits.append(f"placeholder field: {', '.join(placeholder_fields)}")
             if table_fields:
                 provenance_bits.append(f"table field: {', '.join(table_fields)}")
+            if section_fields:
+                provenance_bits.append(f"section field: {', '.join(section_fields)}")
             provenance = "; ".join(provenance_bits) if provenance_bits else "unknown source"
             typer.secho(
                 f"  - '{shape_name}' ({provenance})",
