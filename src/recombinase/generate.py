@@ -17,8 +17,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from lxml import etree
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.oxml.ns import qn
 from pptx.shapes.placeholder import PicturePlaceholder
 from pptx.slide import Slide
 
@@ -214,8 +216,6 @@ def _write_paragraphs(text_frame: Any, items: list[str]) -> None:
     Empty input clears the text frame. Non-empty input keeps the first
     existing paragraph's style profile for every output paragraph.
     """
-    from pptx.oxml.ns import qn
-
     if not items:
         text_frame.clear()
         return
@@ -291,8 +291,6 @@ def _write_paragraphs_cloning_multirun_br(
       full item text, clear trailing runs' `<a:t>`, and strip `<a:br/>`
       children so the cloned paragraph collapses to a single line.
     """
-    from pptx.oxml.ns import qn
-
     # Locate the text body via the existing first paragraph so we don't
     # have to poke at TextFrame's private `_txBody` handle directly.
     if not text_frame.paragraphs:
@@ -306,8 +304,6 @@ def _write_paragraphs_cloning_multirun_br(
     # template prototype was captured before this wipe, so it's safe.
     for existing_p in txBody.findall(qn("a:p")):
         txBody.remove(existing_p)
-
-    from lxml import etree
 
     for item in items:
         cloned_p = deepcopy(source_p_template)
@@ -372,8 +368,6 @@ def _apply_preserved_format(paragraph: Any, pPr_copy: Any, rPr_copy: Any) -> Non
     pPr to precede text runs). rPr is injected at the start of the
     paragraph's first run.
     """
-    from pptx.oxml.ns import qn
-
     if pPr_copy is not None:
         # Remove any existing pPr (added by add_paragraph) then insert ours
         existing_pPr = paragraph._p.find(qn("a:pPr"))
@@ -409,8 +403,6 @@ def _is_multirun_br_first_paragraph(text_frame: Any) -> bool:
     through `_write_paragraphs` (which treats each line as a new
     paragraph and flattens to one rPr profile).
     """
-    from pptx.oxml.ns import qn
-
     paragraphs = text_frame.paragraphs
     if not paragraphs:
         return False
@@ -432,8 +424,6 @@ def _segment_runs_by_br(paragraph_xml: Any) -> list[list[Any]]:
     (e.g., 3 runs + 1 br where the first visual line is authored as two
     adjacent bold runs — a common side effect of editing in PowerPoint).
     """
-    from pptx.oxml.ns import qn
-
     segments: list[list[Any]] = [[]]
     r_tag = qn("a:r")
     br_tag = qn("a:br")
@@ -479,9 +469,6 @@ def _write_multirun_br(text_frame: Any, parts: list[str]) -> None:
 
     Empty input clears the text frame and returns.
     """
-    from lxml import etree
-    from pptx.oxml.ns import qn
-
     if not parts:
         text_frame.clear()
         return
@@ -545,8 +532,6 @@ def _capture_paragraph_profile(paragraphs: Any, index: int) -> tuple[Any | None,
     different paragraphs of the template example; capturing both before
     `tf.clear()` lets us re-emit alternating profiles as we populate.
     """
-    from pptx.oxml.ns import qn
-
     if index < 0 or index >= len(paragraphs):
         return None, None
     target_p_xml = paragraphs[index]._p
@@ -866,8 +851,6 @@ def _clear_cell(cell: Any) -> None:
     text is cleared when that cell's own iteration visits it, so the visual
     region still renders empty.
     """
-    from pptx.oxml.ns import qn
-
     if getattr(cell, "is_spanned", False):
         return
 
@@ -896,8 +879,6 @@ def _clear_cell(cell: Any) -> None:
     # somewhere to inject it.
     empty_p = text_frame.paragraphs[0]
     if first_rPr_copy is not None and empty_p._p.find(qn("a:r")) is None:
-        from lxml import etree
-
         run_el = etree.SubElement(empty_p._p, qn("a:r"))
         etree.SubElement(run_el, qn("a:t"))
     _apply_preserved_format(empty_p, first_pPr_copy, first_rPr_copy)
