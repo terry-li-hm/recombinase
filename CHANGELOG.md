@@ -5,6 +5,27 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.19] - 2026-04-12
+
+### Fixed
+
+- **Multi-run-br writer now segments by `<a:br/>` boundary** instead of
+  walking runs flat. Previously a cell with `runs=3 brs=1` (first
+  visual line authored as two adjacent bold runs — a common PowerPoint
+  editing artifact) would get "secondary" text pushed into run 1 (the
+  second half of the bold line) and the italic run 2 cleared, losing
+  the italic entirely. Now the writer groups runs into segments at
+  every `<a:br/>`, then assigns one part per segment: segment 0's
+  first run gets the primary text and any trailing runs in that
+  segment are cleared, segment 1's first run gets the secondary text,
+  etc. Preserves per-run rPr throughout. Same fix applied to the
+  list-cloning path in `_write_paragraphs_cloning_multirun_br`.
+- Regression for the client CV template's row 3 (`runs=3 brs=1`) and
+  row 5 (`runs=3 brs=2`) cells, where italic wasn't rendering even
+  though recombinase detected the multi-run-br idiom.
+- 2 new regression tests: 3-run + 1-br cell with adjacent bold split,
+  and 3-run + 2-br cell with three visual segments. 167 → 169.
+
 ## [0.1.18] - 2026-04-12
 
 ### Added

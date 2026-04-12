@@ -293,43 +293,54 @@ def _write_paragraphs_cloning_multirun_br(
     for existing_p in txBody.findall(qn("a:p")):
         txBody.remove(existing_p)
 
+    from lxml import etree
+
     for item in items:
         cloned_p = deepcopy(source_p_template)
-        cloned_runs = cloned_p.findall(qn("a:r"))
-        if not cloned_runs:
+        cloned_segments = _segment_runs_by_br(cloned_p)
+        if not cloned_segments:
             txBody.append(cloned_p)
             continue
 
         if "\n" in item:
             parts = item.split("\n")
-            if len(parts) < len(cloned_runs):
-                aligned: list[str] = list(parts) + [""] * (len(cloned_runs) - len(parts))
-            elif len(parts) > len(cloned_runs):
-                aligned = list(parts[: len(cloned_runs) - 1])
-                aligned.append(" ".join(parts[len(cloned_runs) - 1 :]))
+            if len(parts) < len(cloned_segments):
+                aligned: list[str] = list(parts) + [""] * (len(cloned_segments) - len(parts))
+            elif len(parts) > len(cloned_segments):
+                aligned = list(parts[: len(cloned_segments) - 1])
+                aligned.append(" ".join(parts[len(cloned_segments) - 1 :]))
             else:
                 aligned = list(parts)
-            for run_el, part in zip(cloned_runs, aligned, strict=True):
-                t_el = run_el.find(qn("a:t"))
-                if t_el is None:
-                    from lxml import etree
-
-                    t_el = etree.SubElement(run_el, qn("a:t"))
-                t_el.text = part
+            # Per-segment write: first run of each segment gets the text,
+            # trailing runs in the same segment are cleared. Same semantics
+            # as `_write_multirun_br` for the scalar case.
+            for segment, part in zip(cloned_segments, aligned, strict=True):
+                if not segment:
+                    continue
+                first_t = segment[0].find(qn("a:t"))
+                if first_t is None:
+                    first_t = etree.SubElement(segment[0], qn("a:t"))
+                first_t.text = part
+                for extra_run in segment[1:]:
+                    extra_t = extra_run.find(qn("a:t"))
+                    if extra_t is not None:
+                        extra_t.text = ""
         else:
-            # Single-line item: run 0 gets the full text, the rest are
-            # cleared + `<a:br/>` children removed so the paragraph reads
-            # as a single flat line (no dangling soft break).
-            first_t = cloned_runs[0].find(qn("a:t"))
+            # Single-line item against a multi-segment prototype: put the
+            # text in segment 0's first run, clear everything else, strip
+            # the `<a:br/>` children so the paragraph collapses to one
+            # flat visual line.
+            first_run = cloned_segments[0][0]
+            first_t = first_run.find(qn("a:t"))
             if first_t is None:
-                from lxml import etree
-
-                first_t = etree.SubElement(cloned_runs[0], qn("a:t"))
+                first_t = etree.SubElement(first_run, qn("a:t"))
             first_t.text = item
-            for extra_run in cloned_runs[1:]:
-                extra_t = extra_run.find(qn("a:t"))
-                if extra_t is not None:
-                    extra_t.text = ""
+            # Clear everything else across all segments
+            for segment in cloned_segments:
+                for run_el in segment if segment is not cloned_segments[0] else segment[1:]:
+                    extra_t = run_el.find(qn("a:t"))
+                    if extra_t is not None:
+                        extra_t.text = ""
             for br_el in cloned_p.findall(qn("a:br")):
                 cloned_p.remove(br_el)
 
@@ -391,24 +402,66 @@ def _is_multirun_br_first_paragraph(text_frame: Any) -> bool:
     return len(runs) >= 2 and len(brs) >= 1
 
 
+def _segment_runs_by_br(paragraph_xml: Any) -> list[list[Any]]:
+    """Walk a paragraph's direct children in document order and group
+    `<a:r>` runs into segments separated by `<a:br/>` elements.
+
+    Returns a list of segments, each a list of run elements. A paragraph
+    with no runs returns `[]`. A paragraph with runs but no `<a:br/>`
+    returns a single segment containing all runs. This lets the writer
+    preserve the VISUAL line structure of a multi-run-br cell even when
+    the template has extra inline runs inside a single visual line
+    (e.g., 3 runs + 1 br where the first visual line is authored as two
+    adjacent bold runs — a common side effect of editing in PowerPoint).
+    """
+    from pptx.oxml.ns import qn
+
+    segments: list[list[Any]] = [[]]
+    r_tag = qn("a:r")
+    br_tag = qn("a:br")
+    for child in paragraph_xml:
+        if child.tag == r_tag:
+            segments[-1].append(child)
+        elif child.tag == br_tag:
+            segments.append([])
+    # Drop any trailing empty segment (paragraph ends with <a:br/>)
+    if segments and not segments[-1]:
+        segments.pop()
+    # Drop any leading empty segment (paragraph starts with <a:br/>)
+    if segments and not segments[0]:
+        segments.pop(0)
+    return segments
+
+
 def _write_multirun_br(text_frame: Any, parts: list[str]) -> None:
-    """Overwrite each run's `<a:t>` text in the first paragraph, in order.
+    """Overwrite the first paragraph's visual lines with `parts`.
 
-    Preserves per-run `<a:rPr>` (font, weight, italics, colour) and any
-    `<a:br/>` soft breaks between runs. The paragraph structure stays
-    exactly as the template authored it; only the text content of each
-    `<a:t>` element changes. Any paragraphs after the first are dropped
-    so the output matches the template's single-paragraph layout.
+    Segments runs by `<a:br/>` boundary, then assigns one `part` per
+    segment. Within each segment, the FIRST run's `<a:t>` gets the
+    assigned text and all trailing runs in that segment are cleared
+    (their `<a:rPr>` is preserved so the rendered font/weight stays
+    authored, but their text is empty so they don't leak template
+    content). This matches how a reader sees the cell: one line per
+    visual segment, whatever authoring runs the segment happens to
+    contain.
 
-    Part / run count handling:
-    - len(parts) == len(runs): one-to-one, each part replaces its run's text.
-    - len(parts) <  len(runs): trailing runs get their text cleared (their
-      rPr is preserved so the shape doesn't reflow on open).
-    - len(parts) >  len(runs): excess parts are appended to the last run's
-      text joined by a single space so content is never silently dropped.
+    Preserves per-run `<a:rPr>` (font, weight, italics, colour) and the
+    `<a:br/>` elements themselves. The paragraph structure stays exactly
+    as the template authored it; only `<a:t>` text content changes. Any
+    paragraphs after the first are dropped so the output matches the
+    template's single-paragraph layout.
+
+    Segment / part count handling:
+    - len(parts) == len(segments): one-to-one.
+    - len(parts) <  len(segments): trailing segments are cleared (first
+      run of each trailing segment gets empty text, rest stay cleared).
+    - len(parts) >  len(segments): excess parts are joined with a single
+      space and merged into the last segment so content is never
+      silently dropped.
 
     Empty input clears the text frame and returns.
     """
+    from lxml import etree
     from pptx.oxml.ns import qn
 
     if not parts:
@@ -419,32 +472,37 @@ def _write_multirun_br(text_frame: Any, parts: list[str]) -> None:
     if not paragraphs:
         return
     first_p_xml = paragraphs[0]._p
-    runs = first_p_xml.findall(qn("a:r"))
-    if not runs:
+    segments = _segment_runs_by_br(first_p_xml)
+    if not segments:
         # No runs to overwrite — fall back to paragraph-style write so
         # the caller's content still lands somewhere visible.
         _write_paragraphs(text_frame, parts)
         return
 
-    # Pad-or-merge parts to match run count.
-    if len(parts) < len(runs):
-        aligned: list[str] = list(parts) + [""] * (len(runs) - len(parts))
-    elif len(parts) > len(runs):
-        aligned = list(parts[: len(runs) - 1])
-        leftover = " ".join(parts[len(runs) - 1 :])
-        aligned.append(leftover)
+    # Pad-or-merge parts to match segment count.
+    if len(parts) < len(segments):
+        aligned: list[str] = list(parts) + [""] * (len(segments) - len(parts))
+    elif len(parts) > len(segments):
+        aligned = list(parts[: len(segments) - 1])
+        aligned.append(" ".join(parts[len(segments) - 1 :]))
     else:
         aligned = list(parts)
 
-    for run, part in zip(runs, aligned, strict=True):
-        t_element = run.find(qn("a:t"))
-        if t_element is None:
-            # Degenerate run with no <a:t> child (rare); inject one so the
-            # text lands somewhere rather than being silently dropped.
-            from lxml import etree
-
-            t_element = etree.SubElement(run, qn("a:t"))
-        t_element.text = part
+    for segment, part in zip(segments, aligned, strict=True):
+        if not segment:
+            continue
+        # First run of the segment gets the assigned text; trailing runs
+        # in the same segment are cleared (rPr preserved so the visual
+        # authoring stays, but content is replaced cleanly).
+        first_run = segment[0]
+        first_t = first_run.find(qn("a:t"))
+        if first_t is None:
+            first_t = etree.SubElement(first_run, qn("a:t"))
+        first_t.text = part
+        for extra_run in segment[1:]:
+            extra_t = extra_run.find(qn("a:t"))
+            if extra_t is not None:
+                extra_t.text = ""
 
     # Drop any paragraphs beyond the first — this idiom is
     # single-paragraph by definition, and leaving trailing paragraphs

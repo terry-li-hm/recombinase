@@ -1185,3 +1185,130 @@ def test_write_paragraphs_list_without_newlines_uses_classic_path() -> None:
         assert len(runs) == 1, f"classic path should emit 1 run, got {len(runs)}"
         assert runs[0].find(qn("a:t")).text == expected
         assert p_el.findall(qn("a:br")) == []
+
+
+# -- _write_multirun_br segment-by-br handling (v0.1.19) -------------------
+
+
+def _build_cell_with_3runs_1br(cell: object) -> None:
+    """Build a cell with 3 runs + 1 br structure:
+
+        <a:r b="1">Bold primary </a:r>  (run 0)
+        <a:r b="1">continued</a:r>       (run 1, also bold — inline split)
+        <a:br/>                          (soft break)
+        <a:r i="1">(secondary)</a:r>     (run 2, italic)
+
+    This matches the client CV template's edited cells where a line was
+    authored in two adjacent bold runs (common PowerPoint editing
+    artifact) before the soft break. `_write_multirun_br` must assign
+    one visual-line part per SEGMENT (not per run) so the italic run
+    keeps its italic text instead of being cleared in favour of the
+    second bold run.
+    """
+    from lxml import etree
+    from pptx.oxml.ns import qn
+
+    tf = cell.text_frame  # type: ignore[attr-defined]
+    tf.text = ""
+    p_xml = tf.paragraphs[0]._p
+    for existing_run in p_xml.findall(qn("a:r")):
+        p_xml.remove(existing_run)
+
+    r0 = etree.SubElement(p_xml, qn("a:r"))
+    etree.SubElement(r0, qn("a:rPr")).set("b", "1")
+    etree.SubElement(r0, qn("a:t")).text = "Bold primary "
+    r1 = etree.SubElement(p_xml, qn("a:r"))
+    etree.SubElement(r1, qn("a:rPr")).set("b", "1")
+    etree.SubElement(r1, qn("a:t")).text = "continued"
+    etree.SubElement(p_xml, qn("a:br"))
+    r2 = etree.SubElement(p_xml, qn("a:r"))
+    etree.SubElement(r2, qn("a:rPr")).set("i", "1")
+    etree.SubElement(r2, qn("a:t")).text = "(secondary)"
+
+
+def test_write_multirun_br_segments_3runs_1br_correctly() -> None:
+    """A 3-run + 1-br cell where the first line is split across 2 bold
+    runs must still get the italic text in the run AFTER the `<a:br/>`,
+    not in the second bold run. This is the client CV regression for
+    row 3 where `runs=3 brs=1` was rendering the "(duration)" in bold
+    instead of italic because the writer walked runs flat."""
+    from pptx.oxml.ns import qn
+
+    from recombinase.generate import _write_multirun_br
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    txbox = slide.shapes.add_textbox(
+        left=Inches(0.5), top=Inches(0.5), width=Inches(8), height=Inches(2)
+    )
+    _build_cell_with_3runs_1br(txbox)
+
+    _write_multirun_br(txbox.text_frame, ["New primary", "(new secondary)"])
+
+    # Expect: 3 runs still present, first line's first bold run = "New
+    # primary", first line's SECOND bold run cleared to "", italic run
+    # = "(new secondary)", `<a:br/>` still between them.
+    p_xml = txbox.text_frame.paragraphs[0]._p
+    runs = p_xml.findall(qn("a:r"))
+    assert len(runs) == 3, f"expected 3 runs preserved, got {len(runs)}"
+    brs = p_xml.findall(qn("a:br"))
+    assert len(brs) == 1
+
+    t0 = runs[0].find(qn("a:t")).text
+    t1 = runs[1].find(qn("a:t")).text
+    t2 = runs[2].find(qn("a:t")).text
+    assert t0 == "New primary", f"primary line first run = {t0!r}"
+    assert t1 == "", f"primary line second run should be cleared, got {t1!r}"
+    assert t2 == "(new secondary)", f"secondary (italic) run = {t2!r}"
+
+    # rPr preserved on all three runs
+    assert runs[0].find(qn("a:rPr")).get("b") == "1"
+    assert runs[1].find(qn("a:rPr")).get("b") == "1"
+    assert runs[2].find(qn("a:rPr")).get("i") == "1", (
+        "italic run must stay italic — this was the client CV bug"
+    )
+
+
+def test_write_multirun_br_segments_3runs_2brs_correctly() -> None:
+    """A cell with 3 runs + 2 brs has 3 visual segments. Writing 2
+    parts should fill segments 0 and 1 and leave segment 2 empty
+    (rPr preserved so any authoring stays in place for future edits)."""
+    from lxml import etree
+    from pptx.oxml.ns import qn
+
+    from recombinase.generate import _write_multirun_br
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    txbox = slide.shapes.add_textbox(
+        left=Inches(0.5), top=Inches(0.5), width=Inches(8), height=Inches(2)
+    )
+    tf = txbox.text_frame
+    tf.text = ""
+    p_xml = tf.paragraphs[0]._p
+    for existing_run in p_xml.findall(qn("a:r")):
+        p_xml.remove(existing_run)
+    # 3 runs + 2 brs: bold / br / italic / br / underline
+    r0 = etree.SubElement(p_xml, qn("a:r"))
+    etree.SubElement(r0, qn("a:rPr")).set("b", "1")
+    etree.SubElement(r0, qn("a:t")).text = "Line 1"
+    etree.SubElement(p_xml, qn("a:br"))
+    r1 = etree.SubElement(p_xml, qn("a:r"))
+    etree.SubElement(r1, qn("a:rPr")).set("i", "1")
+    etree.SubElement(r1, qn("a:t")).text = "Line 2"
+    etree.SubElement(p_xml, qn("a:br"))
+    r2 = etree.SubElement(p_xml, qn("a:r"))
+    etree.SubElement(r2, qn("a:rPr")).set("u", "sng")
+    etree.SubElement(r2, qn("a:t")).text = "Line 3"
+
+    _write_multirun_br(tf, ["New 1", "New 2"])
+
+    runs = tf.paragraphs[0]._p.findall(qn("a:r"))
+    assert len(runs) == 3
+    assert runs[0].find(qn("a:t")).text == "New 1"
+    assert runs[1].find(qn("a:t")).text == "New 2"
+    assert runs[2].find(qn("a:t")).text == ""
+    # rPr survives
+    assert runs[0].find(qn("a:rPr")).get("b") == "1"
+    assert runs[1].find(qn("a:rPr")).get("i") == "1"
+    assert runs[2].find(qn("a:rPr")).get("u") == "sng"
