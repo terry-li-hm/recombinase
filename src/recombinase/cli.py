@@ -703,7 +703,10 @@ def cmd_generate(
     cfg = load_config(config)
 
     typer.secho(f"Loading records from: '{data_dir}'", fg=typer.colors.CYAN)
-    records = load_records(data_dir)
+    records = load_records(data_dir, sort_by=cfg.sort_by)
+
+    if cfg.sort_by:
+        typer.secho(f"Sorting records by: '{cfg.sort_by}'", fg=typer.colors.CYAN)
 
     if not records:
         typer.secho(

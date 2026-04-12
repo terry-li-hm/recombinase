@@ -35,11 +35,20 @@ from recombinase.config import (
 _R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
 
-def load_records(data_dir: Path | str) -> list[dict[str, Any]]:
+def load_records(
+    data_dir: Path | str,
+    sort_by: str | None = None,
+) -> list[dict[str, Any]]:
     """Load all YAML files from a directory as a list of records.
 
     Each .yaml or .yml file becomes one record. Files are loaded in
-    sorted filename order so output is deterministic.
+    sorted filename order by default.
+
+    If *sort_by* is given, records are re-sorted by the value of that
+    field in each record after loading. Numeric values sort numerically;
+    string values sort lexicographically. Records missing the field
+    sort last. Records with equal sort values preserve their filename
+    order (stable sort).
 
     Each loaded record has `_recombinase_record_dir` stamped with the
     absolute path to its containing directory, so downstream code (in
@@ -73,6 +82,21 @@ def load_records(data_dir: Path | str) -> list[dict[str, Any]]:
         # relative image paths against the YAML file's own directory.
         data.setdefault("_recombinase_record_dir", str(yaml_file.parent))
         records.append(data)
+
+    if sort_by is not None and records:
+        # Sentinel that sorts after any real value.
+        _missing = (1, "")  # (1, ...) sorts after (0, ...) below
+
+        def _sort_key(record: dict[str, Any]) -> tuple[int, int | float | str]:
+            value = record.get(sort_by)
+            if value is None:
+                return _missing
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return (0, value)
+            return (0, str(value))
+
+        records.sort(key=_sort_key)
+
     return records
 
 

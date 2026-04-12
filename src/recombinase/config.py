@@ -160,6 +160,27 @@ class TemplateConfig:
     the source-example baseline, emit an overflow warning. Set to 0 to
     disable overflow detection entirely."""
 
+    sort_by: str | None = None
+    """Optional field name to sort records by before generating slides.
+
+    When set, records are sorted by the value of this field in each YAML
+    record. Numeric values sort numerically; string values sort
+    lexicographically. Records missing the field sort last. Records
+    with equal sort values preserve their filename order (stable sort).
+
+    When None (default), records are generated in sorted-filename order,
+    which is the original behaviour.
+
+    Example config::
+
+        sort_by: rank
+
+    Example record::
+
+        rank: 1
+        name: Jane Doe
+    """
+
     def validate(self) -> list[str]:
         """Return a list of validation error messages, or empty list if OK."""
         errors: list[str] = []
@@ -213,6 +234,7 @@ _KNOWN_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "sections",
         "clear_source_slide",
         "overflow_ratio",
+        "sort_by",
     }
 )
 _KNOWN_TABLE_KEYS: frozenset[str] = frozenset(
@@ -329,6 +351,12 @@ def load_config(path: Path | str) -> TemplateConfig:
     if overflow_ratio_raw < 0:
         raise ValueError(f"{path}: 'overflow_ratio' must be >= 0 (got {overflow_ratio_raw})")
 
+    sort_by_raw = data.get("sort_by")
+    if sort_by_raw is not None and not isinstance(sort_by_raw, str):
+        raise ValueError(
+            f"{path}: 'sort_by' must be a string (field name), got {type(sort_by_raw).__name__}"
+        )
+
     tables_raw = data.get("tables")
     if tables_raw is None:
         tables_raw = {}
@@ -436,6 +464,7 @@ def load_config(path: Path | str) -> TemplateConfig:
         sections=sections,
         clear_source_slide=clear_source_slide_raw,
         overflow_ratio=float(overflow_ratio_raw),
+        sort_by=sort_by_raw,
     )
 
     errors = config.validate()
