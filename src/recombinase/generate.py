@@ -826,20 +826,55 @@ def populate_table(shape: Any, table_config: TableConfig, rows: list[Any]) -> li
 
 
 def _clear_cell(cell: Any) -> None:
-    """Clear all text from a table cell while keeping the cell in place.
+    """Clear all text from a table cell while preserving paragraph and run formatting.
 
-    python-pptx does not expose a cell.clear(); assigning an empty string to
-    `cell.text_frame.text` collapses the cell to a single empty paragraph,
-    which is the closest analogue and preserves column width / row height.
+    Captures the first paragraph's pPr (bullet style, indent, alignment) and
+    the first run's rPr (font, size, weight, color) before clearing, then
+    re-injects them into the resulting empty paragraph. This is the same
+    capture/restore pattern used by ``_write_paragraphs`` — without it,
+    ``cell.text_frame.text = ""`` wipes all formatting and cleared cells
+    revert to application defaults if later hand-edited in PowerPoint.
 
     Spanned (merged non-origin) cells have no accessible text frame — python-
     pptx raises on `.text_frame` for them. Skip silently: the merge origin's
     text is cleared when that cell's own iteration visits it, so the visual
     region still renders empty.
     """
+    from pptx.oxml.ns import qn
+
     if getattr(cell, "is_spanned", False):
         return
-    cell.text_frame.text = ""
+
+    text_frame = cell.text_frame
+    paragraphs = text_frame.paragraphs
+
+    # Capture formatting before clear() wipes it.
+    first_pPr_copy = None
+    first_rPr_copy = None
+    if paragraphs:
+        first_p_xml = paragraphs[0]._p
+        first_pPr = first_p_xml.find(qn("a:pPr"))
+        if first_pPr is not None:
+            first_pPr_copy = deepcopy(first_pPr)
+        first_r = first_p_xml.find(qn("a:r"))
+        if first_r is not None:
+            first_rPr = first_r.find(qn("a:rPr"))
+            if first_rPr is not None:
+                first_rPr_copy = deepcopy(first_rPr)
+
+    text_frame.text = ""
+
+    # Re-inject preserved formatting into the empty paragraph.
+    # After `text = ""`, the paragraph may have no <a:r> element. If we
+    # captured an rPr, create an empty run so _apply_preserved_format has
+    # somewhere to inject it.
+    empty_p = text_frame.paragraphs[0]
+    if first_rPr_copy is not None and empty_p._p.find(qn("a:r")) is None:
+        from lxml import etree
+
+        run_el = etree.SubElement(empty_p._p, qn("a:r"))
+        etree.SubElement(run_el, qn("a:t"))
+    _apply_preserved_format(empty_p, first_pPr_copy, first_rPr_copy)
 
 
 def remove_slide(presentation: Any, slide: Slide) -> None:
