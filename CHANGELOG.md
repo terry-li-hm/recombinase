@@ -5,6 +5,13 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-04-12
+
+### Added
+- `greyscale_photos` config option: converts inserted photos to greyscale
+  (luminance) before embedding. Requires `pip install recombinase[greyscale]`
+  (Pillow). Source photos can be colour — conversion happens at generate time.
+
 ## [0.2.2] - 2026-04-12
 
 ### Added

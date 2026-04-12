@@ -707,7 +707,7 @@ def is_picture_placeholder(shape: Any) -> bool:
     return isinstance(shape, PicturePlaceholder)
 
 
-def set_picture(shape: Any, value: Any, base_dir: Path | None = None) -> None:
+def set_picture(shape: Any, value: Any, base_dir: Path | None = None, *, greyscale: bool = False) -> None:
     """Insert an image file into a PicturePlaceholder shape.
 
     `value` is interpreted as a path to an image file. If it's a relative
@@ -730,7 +730,24 @@ def set_picture(shape: Any, value: Any, base_dir: Path | None = None) -> None:
     if not image_path.exists():
         raise FileNotFoundError(f"picture file not found: {image_path}")
 
-    shape.insert_picture(str(image_path))
+    # Convert to greyscale if requested
+    if greyscale:
+        from io import BytesIO
+
+        try:
+            from PIL import Image
+        except ImportError:
+            raise ImportError(
+                "greyscale_photos requires Pillow. Install with: pip install recombinase[greyscale]"
+            ) from None
+
+        img = Image.open(image_path).convert("L")
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        buf.seek(0)
+        shape.insert_picture(buf)
+    else:
+        shape.insert_picture(str(image_path))
 
 
 def populate_table(shape: Any, table_config: TableConfig, rows: list[Any]) -> list[str]:
@@ -1027,7 +1044,7 @@ def generate_deck(
                 try:
                     record_source = record.get("_recombinase_record_dir")
                     base_dir = Path(record_source) if isinstance(record_source, str) else None
-                    set_picture(shape, value, base_dir=base_dir)
+                    set_picture(shape, value, base_dir=base_dir, greyscale=config.greyscale_photos)
                 except FileNotFoundError as exc:
                     warnings.append(
                         f"record {record_id!r}: picture for {field_name!r} not found: {exc}"

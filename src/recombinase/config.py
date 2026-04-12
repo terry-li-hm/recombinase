@@ -160,6 +160,10 @@ class TemplateConfig:
     the source-example baseline, emit an overflow warning. Set to 0 to
     disable overflow detection entirely."""
 
+    greyscale_photos: bool = False
+    """If True, convert all inserted photos to greyscale (luminance only)
+    before embedding. Useful when the template uses B&W headshots."""
+
     sort_by: str | None = None
     """Optional field name to sort records by before generating slides.
 
@@ -235,6 +239,7 @@ _KNOWN_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "clear_source_slide",
         "overflow_ratio",
         "sort_by",
+        "greyscale_photos",
     }
 )
 _KNOWN_TABLE_KEYS: frozenset[str] = frozenset(
@@ -357,6 +362,12 @@ def load_config(path: Path | str) -> TemplateConfig:
             f"{path}: 'sort_by' must be a string (field name), got {type(sort_by_raw).__name__}"
         )
 
+    greyscale_photos_raw = data.get("greyscale_photos", False)
+    if not isinstance(greyscale_photos_raw, bool):
+        raise ValueError(
+            f"{path}: 'greyscale_photos' must be a boolean, got {type(greyscale_photos_raw).__name__}"
+        )
+
     tables_raw = data.get("tables")
     if tables_raw is None:
         tables_raw = {}
@@ -465,6 +476,7 @@ def load_config(path: Path | str) -> TemplateConfig:
         clear_source_slide=clear_source_slide_raw,
         overflow_ratio=float(overflow_ratio_raw),
         sort_by=sort_by_raw,
+        greyscale_photos=greyscale_photos_raw,
     )
 
     errors = config.validate()
