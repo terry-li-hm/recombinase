@@ -323,6 +323,13 @@ def cmd_validate(
         "--strict",
         help="Exit non-zero if unused shapes are present in the template.",
     ),
+    data_dir: Path = typer.Option(
+        None,
+        "--data-dir",
+        "-d",
+        resolve_path=True,
+        help="Directory of record YAML files to validate against the config.",
+    ),
 ) -> None:
     """Validate a config against its template — pre-flight check before generate.
 
@@ -332,9 +339,13 @@ def cmd_validate(
     - every shape name in `placeholders` exists on the configured source slide
     - reports which template shapes are NOT mapped (unused)
 
+    When --data-dir is supplied, also validates every record YAML in that
+    directory against the config mappings: missing fields, wrong types, and
+    extra unused keys are reported as warnings.
+
     Catches typos (`Consultant_Name` vs `Consultant Name`) and stale configs
     (shapes renamed in the template) before you generate 15 broken slides.
-    Exit 0 on success, 1 on missing shapes, 2 on unused shapes if --strict.
+    Exit 0 on success, 1 on missing shapes, 2 on unused shapes/data if --strict.
     """
     cwd = Path.cwd()
     if config is None:
@@ -472,6 +483,102 @@ def cmd_validate(
             raise typer.Exit(code=2)
 
     typer.secho("\nConfig is valid.", fg=typer.colors.GREEN)
+
+    if data_dir is not None:
+        typer.secho(f"Validating records from: '{data_dir}'", fg=typer.colors.CYAN)
+        records = load_records(data_dir)
+
+        if not records:
+            typer.secho(
+                f"No YAML records found in '{data_dir}'",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
+            return
+
+        known_fields = (
+            set(cfg.placeholders.keys()) | set(cfg.tables.keys()) | set(cfg.sections.keys())
+        )
+        _reserved_keys = {"_recombinase_record_dir", "id", "name"}
+
+        data_warnings: list[str] = []
+
+        for idx, record in enumerate(records):
+            record_id = record.get("id") or record.get("name") or f"record_{idx}"
+
+            for field_name in cfg.placeholders:
+                if field_name not in record:
+                    data_warnings.append(f"{record_id}: missing placeholder field '{field_name}'")
+                elif isinstance(record[field_name], dict):
+                    data_warnings.append(
+                        f"{record_id}: field '{field_name}' expected scalar, got dict"
+                    )
+
+            for field_name in cfg.tables:
+                if field_name not in record:
+                    data_warnings.append(f"{record_id}: missing table field '{field_name}'")
+                else:
+                    value = record[field_name]
+                    if not isinstance(value, list):
+                        data_warnings.append(
+                            f"{record_id}: table field '{field_name}' expected list, "
+                            f"got {type(value).__name__}"
+                        )
+                    else:
+                        for elem_idx, element in enumerate(value):
+                            if not isinstance(element, dict):
+                                data_warnings.append(
+                                    f"{record_id}: table field '{field_name}' row {elem_idx} "
+                                    f"expected dict, got {type(element).__name__}"
+                                )
+
+            for field_name in cfg.sections:
+                if field_name not in record:
+                    data_warnings.append(f"{record_id}: missing section field '{field_name}'")
+                else:
+                    value = record[field_name]
+                    if not isinstance(value, list):
+                        data_warnings.append(
+                            f"{record_id}: section field '{field_name}' expected list, "
+                            f"got {type(value).__name__}"
+                        )
+                    else:
+                        for elem_idx, element in enumerate(value):
+                            if not isinstance(element, dict):
+                                data_warnings.append(
+                                    f"{record_id}: section field '{field_name}' item {elem_idx} "
+                                    f"expected dict, got {type(element).__name__}"
+                                )
+                            else:
+                                if not isinstance(element.get("header"), str):
+                                    data_warnings.append(
+                                        f"{record_id}: section field '{field_name}' item "
+                                        f"{elem_idx} missing or invalid 'header' (expected str)"
+                                    )
+                                if not isinstance(element.get("items"), list):
+                                    data_warnings.append(
+                                        f"{record_id}: section field '{field_name}' item "
+                                        f"{elem_idx} missing or invalid 'items' (expected list)"
+                                    )
+
+            extra_keys = set(record.keys()) - known_fields - _reserved_keys
+            data_warnings.extend(
+                f"{record_id}: unused field '{extra_key}' not in config"
+                for extra_key in sorted(extra_keys)
+            )
+
+        if data_warnings:
+            typer.secho(
+                f"\nData warnings ({len(data_warnings)}):",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
+            for warning in data_warnings:
+                typer.secho(f"  - {warning}", fg=typer.colors.YELLOW, err=True)
+            if strict:
+                raise typer.Exit(code=2)
+        else:
+            typer.secho("Data files valid.", fg=typer.colors.GREEN)
 
 
 @app.command("generate")
