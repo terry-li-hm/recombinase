@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -162,7 +163,49 @@ class TemplateConfig:
                     f"must differ (both are {section.header_index}); the two "
                     "profiles need to come from distinct template paragraphs"
                 )
+        all_shape_names: list[str] = []
+        all_shape_names.extend(self.placeholders.values())
+        all_shape_names.extend(table.shape for table in self.tables.values())
+        all_shape_names.extend(section.shape for section in self.sections.values())
+        seen: set[str] = set()
+        for shape_name in all_shape_names:
+            if shape_name in seen:
+                errors.append(
+                    f"shape name {shape_name!r} appears in multiple config sections "
+                    "(placeholders, tables, and/or sections); each shape should be "
+                    "mapped exactly once"
+                )
+            seen.add(shape_name)
         return errors
+
+
+_KNOWN_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
+    {
+        "template",
+        "source_slide_index",
+        "placeholders",
+        "tables",
+        "sections",
+        "clear_source_slide",
+        "overflow_ratio",
+    }
+)
+_KNOWN_TABLE_KEYS: frozenset[str] = frozenset(
+    {
+        "shape",
+        "columns",
+        "header_row",
+        "footer_rows",
+        "list_joiner",
+    }
+)
+_KNOWN_SECTION_KEYS: frozenset[str] = frozenset(
+    {
+        "shape",
+        "header_index",
+        "bullet_index",
+    }
+)
 
 
 def load_config(path: Path | str) -> TemplateConfig:
@@ -189,6 +232,14 @@ def load_config(path: Path | str) -> TemplateConfig:
         raise ValueError(f"{path}: expected top-level mapping, got {type(raw).__name__}")
 
     data: dict[str, Any] = raw
+
+    unknown_keys = set(data.keys()) - _KNOWN_TOP_LEVEL_KEYS
+    if unknown_keys:
+        warnings.warn(
+            f"{path}: unrecognized top-level key(s): {', '.join(sorted(unknown_keys))}. "
+            "Check for typos (e.g. 'placeholder:' instead of 'placeholders:').",
+            stacklevel=2,
+        )
 
     template_raw = data.get("template")
     if template_raw is None:
@@ -253,6 +304,14 @@ def load_config(path: Path | str) -> TemplateConfig:
             raise ValueError(
                 f"{path}: 'tables.{field_name}' must be a mapping, got {type(table_data).__name__}"
             )
+        unknown_table_keys = set(table_data.keys()) - _KNOWN_TABLE_KEYS
+        if unknown_table_keys:
+            warnings.warn(
+                f"{path}: tables.{field_name}: unrecognized key(s): "
+                f"{', '.join(sorted(unknown_table_keys))}. "
+                "Check for typos.",
+                stacklevel=2,
+            )
         shape_name_raw = table_data.get("shape")
         if not isinstance(shape_name_raw, str):
             raise ValueError(f"{path}: 'tables.{field_name}.shape' must be a string")
@@ -301,6 +360,14 @@ def load_config(path: Path | str) -> TemplateConfig:
             raise ValueError(
                 f"{path}: 'sections.{field_name}' must be a mapping, got "
                 f"{type(section_data).__name__}"
+            )
+        unknown_section_keys = set(section_data.keys()) - _KNOWN_SECTION_KEYS
+        if unknown_section_keys:
+            warnings.warn(
+                f"{path}: sections.{field_name}: unrecognized key(s): "
+                f"{', '.join(sorted(unknown_section_keys))}. "
+                "Check for typos.",
+                stacklevel=2,
             )
         section_shape_raw = section_data.get("shape")
         if not isinstance(section_shape_raw, str):
