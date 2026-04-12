@@ -360,6 +360,10 @@ def _write_paragraphs_cloning_multirun_br(
 
         txBody.append(cloned_p)
 
+    # OOXML requires at least one <a:p> in a txBody.
+    if not txBody.findall(qn("a:p")):
+        etree.SubElement(txBody, qn("a:p"))
+
 
 def _apply_preserved_format(paragraph: Any, pPr_copy: Any, rPr_copy: Any) -> None:
     """Inject a preserved pPr and the first run's rPr into a paragraph.
@@ -799,6 +803,14 @@ def populate_table(shape: Any, table_config: TableConfig, rows: list[Any]) -> li
                     _clear_cell(cell)
                     continue
                 text = table_config.list_joiner.join(items)
+            elif isinstance(value, dict):
+                warnings.append(
+                    f"table {shape.name!r} row {row_index} column "
+                    f"{column_name!r}: value is a dict; expected scalar or list. "
+                    "Cell cleared."
+                )
+                _clear_cell(cell)
+                continue
             else:
                 text = str(value)
             # Route the write based on the source cell's structure:
@@ -1101,6 +1113,11 @@ def generate_deck(
             warnings.extend(f"record {record_id!r}: {sw}" for sw in section_warnings)
 
         generated_count += 1
+
+    if generated_count == 0 and config.clear_source_slide:
+        warnings.append(
+            "0 records generated with clear_source_slide=True — output deck will be empty"
+        )
 
     if config.clear_source_slide:
         remove_slide(presentation, source_slide)
