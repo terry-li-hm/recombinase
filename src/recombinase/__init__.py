@@ -10,7 +10,7 @@ from recombinase.config import TemplateConfig, load_config
 from recombinase.generate import generate_deck
 from recombinase.inspect import inspect_template
 
-__version__ = "0.1.19"
+__version__ = "0.2.0"
 
 __all__ = [
     "TemplateConfig",

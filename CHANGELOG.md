@@ -5,6 +5,26 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-12
+
+### Fixed
+- `validate` now includes section shapes in shape-name checks (was silently excluded)
+- `_clear_cell` preserves paragraph (pPr) and run-level (rPr) formatting
+- Nested dict values in table cells no longer produce garbled Python repr
+
+### Added
+- Config validation: warns on unrecognized top-level and sub-keys (typo detection)
+- Config validation: errors on duplicate shape names across config sections
+- `validate --data-dir`: pre-flight check of record YAML files against config
+- YAML duplicate key detection in record and config files
+- Empty YAML file warning (previously silent skip)
+- File size guard (10 MB) on YAML loading
+- Empty deck warning when 0 records with clear_source_slide=True
+- Zero-items txBody OOXML guard in multi-run-br cloning path
+
+### Changed
+- Hoisted `qn` and `etree` imports to module level in generate.py
+
 ## [0.1.19] - 2026-04-12
 
 ### Fixed
