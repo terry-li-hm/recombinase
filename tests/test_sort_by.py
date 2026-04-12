@@ -125,6 +125,60 @@ class TestLoadRecordsSortBy:
 
 
 # ---------------------------------------------------------------------------
+# Multi-document YAML
+# ---------------------------------------------------------------------------
+
+
+class TestMultiDocumentYaml:
+    """Verify multi-document YAML files (--- separated) produce multiple records."""
+
+    def test_multi_doc_file(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        content = "---\nname: Alice\nrank: 1\n---\nname: Bob\nrank: 2\n---\nname: Charlie\nrank: 3\n"
+        (data_dir / "all.yaml").write_text(content)
+        records = load_records(data_dir)
+        names = [rec["name"] for rec in records]
+        assert names == ["Alice", "Bob", "Charlie"]
+
+    def test_multi_doc_with_sort(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        content = "---\nname: Charlie\nrank: 3\n---\nname: Alice\nrank: 1\n---\nname: Bob\nrank: 2\n"
+        (data_dir / "all.yaml").write_text(content)
+        records = load_records(data_dir, sort_by="rank")
+        names = [rec["name"] for rec in records]
+        assert names == ["Alice", "Bob", "Charlie"]
+
+    def test_multi_doc_with_empty_docs(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        content = "---\nname: Alice\n---\n---\nname: Bob\n"
+        (data_dir / "all.yaml").write_text(content)
+        records = load_records(data_dir)
+        names = [rec["name"] for rec in records]
+        assert names == ["Alice", "Bob"]
+
+    def test_single_doc_still_works(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        _write_yaml(data_dir / "one.yaml", {"name": "Alice"})
+        records = load_records(data_dir)
+        assert len(records) == 1
+        assert records[0]["name"] == "Alice"
+
+    def test_mixed_single_and_multi(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        _write_yaml(data_dir / "a-single.yaml", {"name": "Alice", "rank": 1})
+        multi = "---\nname: Bob\nrank: 2\n---\nname: Charlie\nrank: 3\n"
+        (data_dir / "b-multi.yaml").write_text(multi)
+        records = load_records(data_dir, sort_by="rank")
+        names = [rec["name"] for rec in records]
+        assert names == ["Alice", "Bob", "Charlie"]
+
+
+# ---------------------------------------------------------------------------
 # Config parsing
 # ---------------------------------------------------------------------------
 

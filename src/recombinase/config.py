@@ -13,10 +13,10 @@ import yaml
 
 def _check_duplicate_yaml_keys(path: Path, content: str) -> None:
     """Raise ValueError if any YAML mapping contains duplicate keys."""
-    root = yaml.compose(content)
-    if root is None:
-        return
-    _walk_mapping_for_dupes(root, path)
+    for root in yaml.compose_all(content):
+        if root is None:
+            continue
+        _walk_mapping_for_dupes(root, path)
 
 
 def _walk_mapping_for_dupes(node: Any, path: Path) -> None:

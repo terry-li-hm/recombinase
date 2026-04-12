@@ -72,16 +72,22 @@ def load_records(
         with yaml_file.open("r", encoding="utf-8") as fh:
             content = fh.read()
         _check_duplicate_yaml_keys(yaml_file, content)
-        data = yaml.safe_load(content)
-        if data is None:
+        docs = list(yaml.safe_load_all(content))
+        if not docs or all(doc is None for doc in docs):
             warnings.warn(f"{yaml_file}: YAML file is empty; skipping", stacklevel=2)
             continue
-        if not isinstance(data, dict):
-            raise ValueError(f"{yaml_file}: expected top-level mapping, got {type(data).__name__}")
-        # Stamp the record's source directory so set_picture can resolve
-        # relative image paths against the YAML file's own directory.
-        data.setdefault("_recombinase_record_dir", str(yaml_file.parent))
-        records.append(data)
+        for doc_index, data in enumerate(docs):
+            if data is None:
+                continue
+            if not isinstance(data, dict):
+                suffix = f" (document {doc_index + 1})" if len(docs) > 1 else ""
+                raise ValueError(
+                    f"{yaml_file}{suffix}: expected top-level mapping, got {type(data).__name__}"
+                )
+            # Stamp the record's source directory so set_picture can resolve
+            # relative image paths against the YAML file's own directory.
+            data.setdefault("_recombinase_record_dir", str(yaml_file.parent))
+            records.append(data)
 
     if sort_by is not None and records:
         # Sentinel that sorts after any real value.
