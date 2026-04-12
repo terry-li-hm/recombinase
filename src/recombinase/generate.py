@@ -9,6 +9,7 @@ free via slide duplication.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterator
 from copy import deepcopy
 from datetime import datetime
@@ -21,7 +22,12 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.shapes.placeholder import PicturePlaceholder
 from pptx.slide import Slide
 
-from recombinase.config import SectionConfig, TableConfig, TemplateConfig
+from recombinase.config import (
+    SectionConfig,
+    TableConfig,
+    TemplateConfig,
+    _check_duplicate_yaml_keys,
+)
 
 # OOXML namespace used by r:id / r:embed / r:link attributes inside shape XML.
 _R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -47,9 +53,17 @@ def load_records(data_dir: Path | str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     yaml_files = sorted([*data_dir.glob("*.yaml"), *data_dir.glob("*.yml")])
     for yaml_file in yaml_files:
+        file_size = yaml_file.stat().st_size
+        if file_size > 10 * 1024 * 1024:
+            raise ValueError(
+                f"{yaml_file}: file is {file_size / 1024 / 1024:.1f} MB, exceeding the 10 MB safety limit"
+            )
         with yaml_file.open("r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh)
+            content = fh.read()
+        _check_duplicate_yaml_keys(yaml_file, content)
+        data = yaml.safe_load(content)
         if data is None:
+            warnings.warn(f"{yaml_file}: YAML file is empty; skipping", stacklevel=2)
             continue
         if not isinstance(data, dict):
             raise ValueError(f"{yaml_file}: expected top-level mapping, got {type(data).__name__}")

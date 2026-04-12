@@ -11,6 +11,31 @@ from typing import Any
 import yaml
 
 
+def _check_duplicate_yaml_keys(path: Path, content: str) -> None:
+    """Raise ValueError if any YAML mapping contains duplicate keys."""
+    root = yaml.compose(content)
+    if root is None:
+        return
+    _walk_mapping_for_dupes(root, path)
+
+
+def _walk_mapping_for_dupes(node: Any, path: Path) -> None:
+    """Recursively walk YAML nodes checking for duplicate mapping keys."""
+    if isinstance(node, yaml.MappingNode):
+        seen_keys: set[str] = set()
+        for key_node, value_node in node.value:
+            key = key_node.value if isinstance(key_node, yaml.ScalarNode) else str(key_node)
+            if key in seen_keys:
+                raise ValueError(
+                    f"{path}: duplicate key {key!r} at line {key_node.start_mark.line + 1}"
+                )
+            seen_keys.add(key)
+            _walk_mapping_for_dupes(value_node, path)
+    elif isinstance(node, yaml.SequenceNode):
+        for item in node.value:
+            _walk_mapping_for_dupes(item, path)
+
+
 @dataclass
 class TableConfig:
     """Configuration for populating a table shape from a list of record rows.
@@ -220,11 +245,26 @@ def load_config(path: Path | str) -> TemplateConfig:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
 
+    file_size = path.stat().st_size
+    if file_size > 10 * 1024 * 1024:
+        raise ValueError(
+            f"{path}: file is {file_size / 1024 / 1024:.1f} MB, exceeding the 10 MB safety limit"
+        )
+
     with path.open("r", encoding="utf-8") as fh:
-        try:
-            raw = yaml.safe_load(fh)
-        except yaml.YAMLError as exc:
-            raise ValueError(f"{path}: invalid YAML: {exc}") from exc
+        content = fh.read()
+
+    try:
+        _check_duplicate_yaml_keys(path, content)
+    except ValueError:
+        raise
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{path}: invalid YAML: {exc}") from exc
+
+    try:
+        raw = yaml.safe_load(content)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{path}: invalid YAML: {exc}") from exc
 
     if raw is None:
         raise ValueError(f"{path}: config file is empty")

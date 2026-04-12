@@ -709,7 +709,7 @@ wheels = [
 
 [[package]]
 name = "recombinase"
-version = "0.1.12"
+version = "0.1.19"
 source = { editable = "." }
 dependencies = [
     { name = "python-pptx" },
