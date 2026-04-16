@@ -5,6 +5,14 @@ All notable changes to this project will be documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-04-16
+
+### Added
+- List values on multi-run shapes now preserve per-run formatting. When a
+  template shape has a single paragraph with multiple runs (e.g. bold + grey
+  in one line), a list data value maps each item to the corresponding run.
+  Scalar values and list values on single-run shapes behave as before.
+
 ## [0.2.3] - 2026-04-12
 
 ### Added
