@@ -127,7 +127,10 @@ data/
 └── 03-alice-wong.yaml
 ```
 
-Each file is a flat map — lists become bullet paragraphs:
+Each file is a flat map. How list values are handled depends on the template shape:
+
+- **Single-run shape** (e.g. a bullet list): each item becomes a separate paragraph
+- **Multi-run shape** (e.g. mixed bold + grey in one line): each item replaces the corresponding run, preserving its formatting
 
 ```yaml
 id: jane-doe
@@ -144,6 +147,11 @@ key_skills:
   - Risk modelling
   - Governance
   - Wealth data architecture
+
+# Rich text: list items map to runs in multi-run shapes
+header:
+  - "Bold part of the title. "
+  - "Grey subtitle part."
 ```
 
 The field names on the left must match the keys in your template config's `placeholders:` section.
