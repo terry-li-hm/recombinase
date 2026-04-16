@@ -214,6 +214,18 @@ def set_shape_value(shape: Any, value: Any) -> None:
 
     if isinstance(value, list):
         items = [str(item) for item in value if item is not None and item != ""]
+        # Auto-detect: if the source shape is a single paragraph with
+        # multiple runs (no <a:br/> separators), map list items to runs
+        # preserving each run's formatting. This is the "rich text" path
+        # for shapes like headers with mixed bold/grey in one line.
+        paras = tf.paragraphs
+        if len(paras) == 1:
+            first_p_xml = paras[0]._p
+            source_runs = first_p_xml.findall(qn("a:r"))
+            source_brs = first_p_xml.findall(qn("a:br"))
+            if len(source_runs) >= 2 and len(source_brs) == 0:
+                _write_runs_preserving_format(tf, items)
+                return
         _write_paragraphs(tf, items)
         return
 
@@ -469,6 +481,49 @@ def _segment_runs_by_br(paragraph_xml: Any) -> list[list[Any]]:
     if segments and not segments[0]:
         segments.pop(0)
     return segments
+
+
+def _write_runs_preserving_format(text_frame: Any, items: list[str]) -> None:
+    """Replace text in a single-paragraph multi-run shape, one item per run.
+
+    Preserves each run's rPr (font, size, bold, color, italic) while
+    replacing only the ``<a:t>`` text content. Used when the template has
+    mixed formatting in one line — e.g. bold title + grey subtitle — and
+    the data value is a list matching the run count.
+
+    Rules:
+    - items[i] replaces run[i]'s text
+    - If fewer items than runs: excess runs are removed
+    - If more items than runs: extra items are appended as new runs
+      cloning the last source run's rPr
+    """
+    if not text_frame.paragraphs:
+        return
+    first_p_xml = text_frame.paragraphs[0]._p
+    source_runs = first_p_xml.findall(qn("a:r"))
+    if not source_runs:
+        return
+
+    # Replace text in existing runs
+    for idx, run_xml in enumerate(source_runs):
+        text_el = run_xml.find(qn("a:t"))
+        if text_el is None:
+            continue
+        if idx < len(items):
+            text_el.text = items[idx]
+        else:
+            # More runs than items — remove excess
+            first_p_xml.remove(run_xml)
+
+    # More items than runs — append new runs cloning last run's format
+    if len(items) > len(source_runs):
+        last_run = source_runs[-1]
+        for extra_text in items[len(source_runs):]:
+            new_run = deepcopy(last_run)
+            text_el = new_run.find(qn("a:t"))
+            if text_el is not None:
+                text_el.text = extra_text
+            first_p_xml.append(new_run)
 
 
 def _write_multirun_br(text_frame: Any, parts: list[str]) -> None:
