@@ -915,7 +915,7 @@ def test_populate_table_preserves_multirun_br_on_scalar_with_newline(
         header_row=True,
     )
     rows = [
-        {"role": "Management Principal, client\n(3 years)", "organisation": "client"},
+        {"role": "Management Principal, Acme Corp\n(3 years)", "organisation": "Acme Corp"},
         {"role": "AGM, China CITIC Bank International\n(3.5 years)", "organisation": "CNCBI"},
     ]
     warnings = populate_table(shape, config, rows)
@@ -927,7 +927,7 @@ def test_populate_table_preserves_multirun_br_on_scalar_with_newline(
     assert len(paragraphs_r1) == 1, "dual-run-br cell must stay single-paragraph"
     runs_r1 = paragraphs_r1[0].runs
     assert len(runs_r1) == 2, f"expected 2 runs, got {len(runs_r1)}"
-    assert runs_r1[0].text == "Management Principal, client"
+    assert runs_r1[0].text == "Management Principal, Acme Corp"
     assert runs_r1[0].font.bold is True, "primary run lost bold rPr"
     assert runs_r1[1].text == "(3 years)"
     assert runs_r1[1].font.italic is True, "secondary run lost italic rPr"

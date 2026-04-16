@@ -423,7 +423,7 @@ def _is_multirun_br_first_paragraph(text_frame: Any) -> bool:
     primary text, italic bracketed secondary, etc.). This is the CV
     template idiom for cells like::
 
-        Management Principal, client        (run 0, bold)
+        Management Principal, Acme Corp    (run 0, bold)
         (3 years)                          (run 1, italic)
 
     where the line break is Shift+Enter in PowerPoint — a `<a:br/>`, not
